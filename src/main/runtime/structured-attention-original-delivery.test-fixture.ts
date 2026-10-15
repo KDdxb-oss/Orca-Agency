@@ -1,15 +1,34 @@
+import { writeFile } from 'node:fs/promises'
+import { MobileNotificationDismissalStore } from './mobile-notification-dismissal-store'
 import {
   RuntimeMobileNotificationController,
   type MobileNotificationDismissEvent
 } from './runtime-mobile-notification-controller'
 
-export function captureOriginalDeliveryRetirement(directory: string): {
+export async function captureOriginalDeliveryRetirement(directory: string): Promise<{
   originalEpoch: string
   restartedEpoch: string
   event: MobileNotificationDismissEvent
-} {
+}> {
   const original = new RuntimeMobileNotificationController()
-  original.configureDismissalStore(directory)
+  // The mobile test runner has no packaged notification writer worker. Persist the original
+  // delivery directly so the restarted controller still exercises the real recovery path.
+  const persisted = new MobileNotificationDismissalStore(directory, async (path, value) => {
+    await writeFile(path, JSON.stringify(value))
+  })
+  original.onDispatched((value) => {
+    if (
+      value.type === 'notification' &&
+      value.notificationEpoch &&
+      value.notificationSeq !== undefined
+    ) {
+      persisted.record({
+        ...value,
+        notificationEpoch: value.notificationEpoch,
+        notificationSeq: value.notificationSeq
+      })
+    }
+  })
   original.dispatch({
     type: 'notification',
     source: 'agent-task-complete',
@@ -28,6 +47,7 @@ export function captureOriginalDeliveryRetirement(directory: string): {
       cause: { kind: 'prompt', promptId: 'A' }
     }
   })
+  await persisted.flush()
   const restarted = new RuntimeMobileNotificationController()
   restarted.configureDismissalStore(directory)
   let event: MobileNotificationDismissEvent | undefined

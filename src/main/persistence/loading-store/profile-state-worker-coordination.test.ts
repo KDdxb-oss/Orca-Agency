@@ -170,10 +170,21 @@ describe('worker-owned Store writes', () => {
       expect(readState().workspaceSession).toMatchObject({ activeTabId: 'a', overflow: null })
       expect(serialize).toHaveBeenCalledOnce()
       const revision = authority.inner.revision
-      store.setWorkspaceSession(session)
+      const firstPayload = authority.captures
+        .at(-1)
+        ?.find((row) => row.domain === 'workspaceSession')?.payload
+      store.setWorkspaceSession(readState().workspaceSession)
       await store.flushPendingOrThrowAsync()
       expect(authority.inner.revision).toBe(revision)
-      expect(serialize).toHaveBeenCalledTimes(2)
+      store.setWorkspaceSession(session)
+      await store.flushPendingOrThrowAsync()
+      const secondPayload = authority.captures
+        .at(-1)
+        ?.find((row) => row.domain === 'workspaceSession')?.payload
+      expect(secondPayload).not.toBe(firstPayload)
+      expect(authority.inner.revision).toBe(revision + 1)
+      expect(readState().workspaceSession.activeTabId).toBe('pending-tab')
+      expect(serialize).toHaveBeenCalledOnce()
     } finally {
       Reflect.deleteProperty(session, 'toJSON')
     }

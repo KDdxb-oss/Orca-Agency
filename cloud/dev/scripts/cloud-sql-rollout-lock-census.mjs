@@ -36,7 +36,7 @@ export const SELECTABLE_LEASE = {
 export const LOCK_GROUPS = new Set([PRODUCTION_GROUP, STAGING_GROUP, SELECTABLE_GROUP])
 
 export function readWorkflow(file) {
-  return readFileSync(new URL(file, WORKFLOW_ROOT), 'utf8')
+  return readFileSync(new URL(file, WORKFLOW_ROOT), 'utf8').replace(/\r\n/g, '\n')
 }
 
 export function workflowFiles() {

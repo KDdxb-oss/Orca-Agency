@@ -27,11 +27,13 @@ describe('Windows shell fallback over node-pty ConPTY', () => {
   const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
   beforeEach(() => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    vi.stubEnv('ORCA_WINDOWS_CONPTY_BACKEND', 'bundled')
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     nodePty.spawn.mockReset()
   })
   afterEach(() => {
     Object.defineProperty(process, 'platform', platform)
+    vi.unstubAllEnvs()
     vi.restoreAllMocks()
   })
 
