@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="420" viewBox="0 0 960 420"><rect width="960" height="420" rx="16" fill="#112d38"/><g font-family="Arial,sans-serif">
+<text x="42" y="54" fill="#51d7d3" font-size="20">ORCA AGENCY</text>
+<rect x="42" y="100" width="250" height="228" rx="16" fill="#1d4554" stroke="#51d7d3"/>
+<text x="65" y="203" fill="#ffffff" font-size="57" font-weight="bold">ARM64</text>
+<text x="66" y="252" fill="#bed9e1" font-size="23">Native Windows build</text>
+<text x="340" y="149" fill="#ffffff" font-size="31" font-weight="bold">Built for Windows on ARM</text>
+<g fill="#bed9e1" font-size="24"><text x="340" y="204">Native app + terminal runtime</text><text x="340" y="250">Local speech component omitted</text><text x="340" y="296">Performance work continues</text></g>
+<text x="42" y="380" fill="#bed9e1" font-size="20">Architecture support is not a guarantee that every terminal stall is fixed.</text></g></svg>

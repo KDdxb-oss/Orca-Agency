@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="420" viewBox="0 0 960 420"><rect width="960" height="420" rx="16" fill="#112d38"/><g font-family="Arial,sans-serif">
+<text x="42" y="54" fill="#51d7d3" font-size="20">ORCA AGENCY</text>
+<text x="42" y="104" fill="#ffffff" font-size="32" font-weight="bold">Return to the same conversation.</text>
+<g fill="#1d4554" stroke="#51d7d3"><rect x="42" y="150" width="250" height="142" rx="10"/><rect x="356" y="150" width="250" height="142" rx="10"/><rect x="670" y="150" width="250" height="142" rx="10"/></g>
+<g fill="#ffffff" font-size="24" font-weight="bold"><text x="62" y="200">Saved chat</text><text x="376" y="200">Restart terminal</text><text x="690" y="200">Same conversation</text></g>
+<g fill="#bed9e1" font-size="21"><text x="62" y="245">Exact session identity</text><text x="376" y="245">Current launch settings</text><text x="690" y="245">Your selected folder</text></g>
+<g fill="#51d7d3" font-size="42"><text x="304" y="238">→</text><text x="618" y="238">→</text></g>
+<text x="42" y="349" fill="#bed9e1" font-size="20">Verified local Codex sessions in the same account.</text>
+<text x="42" y="380" fill="#bed9e1" font-size="20">Account changes keep their confirmation.</text></g></svg>
