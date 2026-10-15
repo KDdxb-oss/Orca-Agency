@@ -51,6 +51,28 @@ describe('pane terminal output scheduler', () => {
     )
   })
 
+  it.each([true, false])(
+    'keeps a bulk frame ordered when its restore is latencySensitive:%s',
+    async (latencySensitive) => {
+      vi.useFakeTimers()
+      const { writeTerminalOutput } = await loadScheduler()
+      const terminal = createTerminal()
+      const frame = '\x1b[?2026h\x1b[?25lbody\x1b[?2026l'
+      const restore = '\x1b[?25l\x1b[22;4H\x1b[?25h'
+
+      writeTerminalOutput(terminal, frame, {
+        foreground: true,
+        latencySensitive: false,
+        coalesceForeground: true
+      })
+      expect(terminal.write).not.toHaveBeenCalled()
+      writeTerminalOutput(terminal, restore, { foreground: true, latencySensitive })
+      vi.advanceTimersByTime(0)
+
+      expect(terminal.write).toHaveBeenCalledExactlyOnceWith(frame + restore, expect.any(Function))
+    }
+  )
+
   it('drains harmless synchronized endings when latency-sensitive foreground follows', async () => {
     vi.useFakeTimers()
     const { writeTerminalOutput } = await loadScheduler()

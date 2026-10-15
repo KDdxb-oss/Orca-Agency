@@ -7,6 +7,8 @@ export type AiVaultSessionTitle = {
   agent: Extract<AiVaultAgent, 'claude' | 'codex'>
   sessionId: string
   title: string
+  /** Exact Claude transcript classification when a path was supplied. */
+  isHeadless?: boolean
 }
 
 export type AiVaultSessionTitleRequest = {

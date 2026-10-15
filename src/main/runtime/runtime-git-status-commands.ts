@@ -14,6 +14,8 @@ import {
   getSubmoduleStatus as getGitSubmoduleStatus
 } from '../git/status'
 import type { GitProviderStatusOptions } from '../providers/types'
+import { getRepoExecutionHostId } from '../../shared/execution-host'
+import { isFolderRepo } from '../../shared/repo-kind'
 import { getWorktreeSharedLinkPaths } from '../git/worktree-shared-directories'
 import {
   localGitOptionsForTarget,
@@ -29,6 +31,13 @@ export class RuntimeGitStatusCommands {
     options?: GitProviderStatusOptions
   ): Promise<GitStatusResult> {
     const target = await this.host.resolveRuntimeGitTarget(worktreeSelector)
+    if (
+      target.repo &&
+      getRepoExecutionHostId(target.repo) === target.executionHostId &&
+      isFolderRepo(target.repo)
+    ) {
+      return { entries: [], conflictOperation: 'unknown' }
+    }
     const provider = requireRuntimeGitProvider(target)
     if (provider) {
       return options

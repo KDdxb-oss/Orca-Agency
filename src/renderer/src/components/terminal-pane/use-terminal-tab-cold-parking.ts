@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { useShallow } from 'zustand/react/shallow'
 import type { TerminalTab } from '../../../../shared/terminal-tab-types'
 import { useAppStore } from '../../store'
+import { useTerminalProviderSnapshotCapabilityRevision } from '../terminal/use-terminal-provider-snapshot-capability-revision'
 import {
   findActivityTerminalPortal,
   type ActivityTerminalPortalTarget
@@ -114,6 +115,7 @@ export function useTerminalTabColdParking(args: {
     getTerminalPaneSplitMountLeaseTabIds,
     getTerminalPaneSplitMountLeaseTabIds
   )
+  const snapshotCapabilityRevision = useTerminalProviderSnapshotCapabilityRevision()
   const pairedRuntimeParkingEnvironmentIds = useAppStore(
     selectPairedRuntimeParkingEnvironmentIdsFromState
   )
@@ -158,9 +160,7 @@ export function useTerminalTabColdParking(args: {
     const overrides = getTerminalParkingPolicyOverrides()
     const currentTerminalTabIds = new Set(terminalTabs.map((tab) => tab.id))
     const portalTabIds = new Set(
-      activityTerminalPortals
-        .filter((portal) => portal.worktreeId === worktreeId)
-        .map((portal) => portal.tabId)
+      activityTerminalPortals.filter((p) => p.worktreeId === worktreeId).map((p) => p.tabId)
     )
     for (const tabId of Array.from(terminalTabHiddenSinceRef.current.keys())) {
       if (!currentTerminalTabIds.has(tabId)) {
@@ -269,6 +269,7 @@ export function useTerminalTabColdParking(args: {
     pendingStartupByTabId,
     pairedRuntimeParkingEnvironmentIds,
     shouldMeasureHiddenWorktree,
+    snapshotCapabilityRevision,
     terminalParkingEnabled,
     terminalSshParkingEnabled,
     terminalTabParkingRevision,
@@ -283,15 +284,12 @@ export function useTerminalTabColdParking(args: {
   const evictionExemptLayoutKey = useAppStore((state) =>
     isForceParked ? selectEvictionExemptTerminalTabLayoutKey(state, terminalTabs) : ''
   )
-  // Why memoized: resolving an exemption re-reads the store and walks the
-  // layout tree per tab, so recompute only when the force-park verdict, the
-  // tabs, or their layout PTYs change — not on every assignment/park-set change
-  // below.
+  // Resolving exemptions walks the layout tree, so only relevant inputs refresh it.
   const evictionExemptTerminalTabIds = useMemo(
     () =>
       isForceParked ? selectEvictionExemptTerminalTabIds(worktreeId, terminalTabs) : EMPTY_TAB_IDS,
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the layout key encodes the store fields the selector re-reads internally.
-    [evictionExemptLayoutKey, isForceParked, terminalTabs, worktreeId]
+    [evictionExemptLayoutKey, isForceParked, snapshotCapabilityRevision, terminalTabs, worktreeId]
   )
 
   // Why: the park verdict before damping — worktree-level park (prop from
@@ -299,10 +297,12 @@ export function useTerminalTabColdParking(args: {
   // the watcher-sync effect must share the pinned result below so watcher
   // lifecycle tracks the committed unmounts.
   const candidateParkedTerminalTabIds = useMemo(() => {
+    // Watcher eligibility reads capability state outside React.
+    void snapshotCapabilityRevision
     const parked = new Set<string>()
     for (const terminalTab of terminalTabs) {
-      const assignment = assignments.get(terminalTab.id)
-      const isVisible = Boolean(isWorktreeActive && assignment && assignment.isActiveInGroup)
+      const isVisible =
+        isWorktreeActive && assignments.get(terminalTab.id)?.isActiveInGroup === true
       const hasActivityTerminalPortal =
         findActivityTerminalPortal(activityTerminalPortals, {
           worktreeId,
@@ -353,6 +353,7 @@ export function useTerminalTabColdParking(args: {
     isWorktreeActive,
     shouldMeasureHiddenWorktree,
     sleepingRecordOwnedTabIds,
+    snapshotCapabilityRevision,
     terminalTabs,
     terminalPaneSplitMountLeaseTabIds,
     worktreeId

@@ -10,6 +10,19 @@ function Test-ReviewedCrashReporter($Record) {
   return $Record.CommandLine -match '(?:^|\s)--type=crashpad-handler(?:\s|$)'
 }
 
+function Wait-ReviewedDesktopExclusiveUse([string] $Executable, [int] $DesktopId, [int] $Attempts = 20, [int] $DelayMs = 250) {
+  for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
+    $foreign = @(Get-ReviewedInstallProcesses $Executable | Where-Object {
+      -not (Test-ReviewedCrashReporter $_) -and $_.ProcessId -ne $DesktopId -and
+      $_.ParentProcessId -ne $DesktopId
+    })
+    if (-not $foreign.Count) { return }
+    if ($attempt + 1 -lt $Attempts) { Start-Sleep -Milliseconds $DelayMs }
+  }
+  $identities = ($foreign | ForEach-Object { "PID=$($_.ProcessId) parent=$($_.ParentProcessId) created=$($_.CreationDate)" }) -join '; '
+  throw "Another process uses the installed executable; no desktop was closed. $identities"
+}
+
 function Test-ReviewedDesktopAbsent([string] $Executable) {
   # A leftover crash reporter has no application window and must not prevent recovery.
   return @(Get-ReviewedInstallProcesses $Executable | Where-Object {

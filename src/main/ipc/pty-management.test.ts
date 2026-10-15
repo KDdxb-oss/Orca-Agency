@@ -365,6 +365,29 @@ describe('pty:management IPC handlers', () => {
       expect(legacy.shutdown).toHaveBeenCalledWith('old-1', { immediate: true })
     })
 
+    it('kills a legacy session when both hosts use the same wire protocol', async () => {
+      const oldSessions = [makeSession('old-1')]
+      const current = makeAdapter(5, [])
+      const legacy = makeAdapter(5, [])
+      legacy.listSessions = vi.fn(async () =>
+        oldSessions.map(({ protocolVersion: _pv, ...rest }) => rest)
+      )
+      legacy.shutdown = vi.fn(async (id: string) => {
+        const index = oldSessions.findIndex((session) => session.sessionId === id)
+        if (index !== -1) {
+          oldSessions.splice(index, 1)
+        }
+      })
+      const { registerDaemonManagementHandlers } = await importFresh()
+      getDaemonProviderMock.mockReturnValue(await makeRouter(current, [legacy]))
+      registerDaemonManagementHandlers()
+
+      const result = await runKillAllWithPolls(buildHandlerMap()['pty:management:killAll'])
+      expect(result).toEqual({ killedCount: 1, remainingCount: 0, killedSessionIds: ['old-1'] })
+      expect(legacy.shutdown).toHaveBeenCalledWith('old-1', { immediate: true })
+      expect(current.shutdown).not.toHaveBeenCalled()
+    })
+
     it('reports remainingCount when sessions refuse to die after the poll window', async () => {
       const sessions = [makeSession('stuck')]
       const current = makeAdapter(5, [])
@@ -476,6 +499,24 @@ describe('pty:management IPC handlers', () => {
         success: boolean
       }
 
+      expect(result.success).toBe(true)
+      expect(legacy.shutdown).toHaveBeenCalledWith('old-1', { immediate: true })
+      expect(current.shutdown).not.toHaveBeenCalled()
+    })
+
+    it('routes by session owner when current and legacy hosts share a protocol', async () => {
+      const current = makeAdapter(5, [makeSession('new-1')])
+      const legacy = makeAdapter(5, [makeSession('old-1')])
+      const { registerDaemonManagementHandlers } = await importFresh()
+      getDaemonProviderMock.mockReturnValue(await makeRouter(current, [legacy]))
+      registerDaemonManagementHandlers()
+
+      const result = (await buildHandlerMap()['pty:management:killOne'](
+        {},
+        {
+          sessionId: 'old-1'
+        }
+      )) as { success: boolean }
       expect(result.success).toBe(true)
       expect(legacy.shutdown).toHaveBeenCalledWith('old-1', { immediate: true })
       expect(current.shutdown).not.toHaveBeenCalled()

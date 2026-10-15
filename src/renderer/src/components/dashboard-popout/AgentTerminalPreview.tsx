@@ -30,6 +30,10 @@ import type {
 } from '../../../../shared/terminal-preview'
 import type { AgentTerminalPreviewProps } from './agent-terminal-preview-props'
 import { parseAppSshPtyId } from '../../../../shared/ssh-pty-id'
+import { usePreviewTerminalOsFileDropOwner } from './use-preview-terminal-os-file-drop-owner'
+import { createPreviewLivePayloadWriter } from './preview-terminal-live-payload-writer'
+import { createPreviewLivePhaseFrame } from './preview-terminal-live-phase-frame'
+import { nextPreviewTerminalSurfaceId } from './preview-terminal-surface-id'
 
 const PREVIEW_SCROLLBACK_ROWS = 24
 // Why: main only ever serializes PREVIEW_SCROLLBACK_ROWS of history into this
@@ -41,11 +45,6 @@ const RESYNC_RETRY_DELAY_MS = 150
 // pty); a mismatch that survives the re-ask is the PTY's real grid.
 const STALE_GRID_SNAPSHOT_RETRIES = 1
 const STALE_GRID_SNAPSHOT_RETRY_MS = 300
-
-// Why per mount: one window may show the same pty twice (a grid card and the
-// dialog it opens); main keys each preview's stream, acks and claim by this id.
-let surfaceCounter = 0
-const nextSurfaceId = (): string => `preview-surface-${++surfaceCounter}`
 
 /**
  * Live interactive view of an agent's terminal, streaming from the main
@@ -70,6 +69,13 @@ export function AgentTerminalPreview({
 }: AgentTerminalPreviewProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
+  const connectionEpochRef = useRef(0)
+  const fileDropRef = usePreviewTerminalOsFileDropOwner({
+    ptyId,
+    workspace,
+    terminalRef,
+    connectionEpochRef
+  })
   const settings = useAppStore((state) => state.settings)
   const systemPrefersDark = useSystemPrefersDark()
   const macOptionAsAlt = useEffectiveMacOptionAsAlt(settings?.terminalMacOptionAsAlt)
@@ -89,7 +95,7 @@ export function AgentTerminalPreview({
   )
   const retainTheme = useShallow((theme: ITheme | null) => theme)
   const terminalTheme = retainTheme(composedTheme)
-  const [mountSurfaceId] = useState(nextSurfaceId)
+  const [mountSurfaceId] = useState(nextPreviewTerminalSurfaceId)
   const surfaceIdRef = useRef(mountSurfaceId)
   // A null snapshot means no serializer knows this pty (it died or was never
   // spawned this session) — say so instead of painting a silent blank terminal.
@@ -174,18 +180,15 @@ export function AgentTerminalPreview({
     let livePending = false
     // Why one frame later: the last replay write is parsed but not yet laid
     // out when its callback fires; lifting the veil there shows the old frame.
-    const goLive = (): void => {
-      livePending = false
-      requestAnimationFrame(() => {
-        if (!disposed && !snapshotRetry.isUnavailable()) {
-          setPhase('live')
-        }
-      })
-    }
+    const livePhaseFrame = createPreviewLivePhaseFrame({
+      isCurrent: () => !disposed && !snapshotRetry.isUnavailable(),
+      onLive: () => setPhase('live')
+    })
     const markLiveWhenReplayDrains = (): void => {
       livePending = true
       if (replayDepth === 0) {
-        goLive()
+        livePending = false
+        livePhaseFrame.schedule()
       }
     }
     const writeReplayed = (chunk: string, onDone?: () => void, live = false): void => {
@@ -200,28 +203,22 @@ export function AgentTerminalPreview({
       terminal?.write(chunk, () => {
         replayDepth--
         if (replayDepth === 0 && livePending) {
-          goLive()
+          livePending = false
+          livePhaseFrame.schedule()
         }
         scheduleFit()
         onDone?.()
       })
     }
 
-    const writeLive = (payload: Extract<TerminalPreviewDataPayload, { type: 'data' }>): void => {
-      if (!terminal) {
-        pendingLivePayloads.push(payload)
-        return
-      }
-      writeReplayed(
-        payload.data,
-        () => {
-          if (!disposed) {
-            void window.api.terminalPreview.ack(ptyId, payload.bytes, surfaceId)
-          }
-        },
-        true
-      )
-    }
+    const writeLive = createPreviewLivePayloadWriter({
+      ptyId,
+      surfaceId,
+      hasTerminal: () => terminal !== null,
+      isDisposed: () => disposed,
+      pending: pendingLivePayloads,
+      writeReplayed
+    })
 
     const pasteClipboardText = createPreviewClipboardPaster({
       ptyId,
@@ -370,6 +367,7 @@ export function AgentTerminalPreview({
         return
       }
       refreshInFlight = true
+      connectionEpochRef.current += 1
       inputInstallers.invalidateTargetInteractions()
       const connection = await window.api.terminalPreview
         .connect(ptyId, {
@@ -438,6 +436,8 @@ export function AgentTerminalPreview({
       }
       snapshotRetry.dispose()
       gridClaim.dispose()
+      livePhaseFrame.dispose()
+      boxFit.dispose()
       boxResizeObserver?.disconnect()
       offData?.()
       inputInstallers.dispose()
@@ -468,6 +468,7 @@ export function AgentTerminalPreview({
   return (
     <PreviewTerminalSurface
       containerRef={containerRef}
+      fileDropRef={fileDropRef}
       className={className}
       background={terminalTheme?.background}
       phase={phase}

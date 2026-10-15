@@ -16,7 +16,11 @@ export type TabsSlice = {
   groupsByWorktree: Record<string, TabGroup[]>
   activeGroupIdByWorktree: Record<string, string>
   layoutByWorktree: Record<string, TabGroupLayoutNode>
-  moveTerminalTabToWorkspace: (tabId: string, destinationId: string) => boolean
+  moveTerminalTabToWorkspace: (
+    tabId: string,
+    destinationId: string,
+    options?: { groupId?: string; index?: number }
+  ) => boolean
   createUnifiedTab: (
     worktreeId: string,
     contentType: TabContentType,
@@ -39,6 +43,8 @@ export type TabsSlice = {
         /** Client-local unified tab id to insert after; an explicit targetGroupId still wins. */
         afterTabId: string
         activate: boolean
+        /** false selects an activated tab without stamping its focus time (the group history still updates). */
+        recordFocus: boolean
         recordInteraction: boolean
       }
     >
@@ -78,7 +84,11 @@ export type TabsSlice = {
     entityId: string,
     contentType?: TabContentType
   ) => Tab | null
-  activateTab: (tabId: string, opts?: { preservePreview?: boolean; worktreeId?: string }) => void
+  activateTab: (
+    tabId: string,
+    /** recordFocus false skips the focus-time stamp (not a user visit); the group history still updates. */
+    opts?: { preservePreview?: boolean; worktreeId?: string; recordFocus?: boolean }
+  ) => void
   closeUnifiedTab: (
     tabId: string,
     opts?: {

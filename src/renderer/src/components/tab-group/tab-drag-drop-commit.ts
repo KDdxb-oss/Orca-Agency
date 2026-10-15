@@ -6,6 +6,7 @@ import { resolveTabInsertion } from './tab-insertion'
 import { resolveSourceGroupRestoreOnDrop } from './tab-drag-preview-target'
 import { getDragPointer } from './tab-drag-pointer'
 import {
+  findTabGroupPanelUnderPointer,
   resolveActivePaneColumnSplitTarget,
   type TabGroupPanelGeometrySnapshot
 } from './tab-group-panel-split-target'
@@ -76,6 +77,15 @@ export function commitTabDragDrop({
   }
 
   if (!event.over) {
+    finishDrag(true)
+    return
+  }
+
+  const pointer = getDragPointer(event)
+  if (
+    pointer &&
+    !findTabGroupPanelUnderPointer(worktreeId, pointer, { geometry: dragGeometryRef.current })
+  ) {
     finishDrag(true)
     return
   }

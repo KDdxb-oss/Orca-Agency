@@ -28,6 +28,7 @@ export function discardDetachedQueueEntry(entry: QueueEntry): void {
   entry.chunkIndex = 0
   entry.queuedChars = 0
   entry.highPriority = false
+  entry.interactiveCharsRemaining = 0
   clearForegroundRelease(entry)
 }
 
@@ -76,6 +77,7 @@ export function replaceBacklogWithWarning(
   entry.queuedChars = warning.length
   entry.backgroundBacklogDropped = true
   entry.highPriority = true
+  entry.interactiveCharsRemaining = 0
   entry.foregroundHold = false
   if (debugEnabled && shouldNotify) {
     debugState.droppedBacklogCount++

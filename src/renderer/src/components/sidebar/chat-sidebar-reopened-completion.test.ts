@@ -7,6 +7,9 @@ import { chatSidebarListItems } from './chat-sidebar-groups'
 import { chatSidebarPreferencePatch, chatCompletionEdit } from './chat-sidebar-identity'
 import { chatCompletionActivityTime } from './chat-sidebar-completion'
 import { chatSessionKey } from './chat-sidebar-types'
+import { resolveAgentStatusLiveEntryStateHistory } from '@/store/slices/agent-status-live-entry-state-history'
+import { normalizeAgentStatusEvent } from '@/hooks/ipc-events/normalize-agent-status-event'
+import { createTestStore } from '@/store/slices/store-test-helpers'
 import {
   chatRow,
   chatSession,
@@ -64,32 +67,131 @@ function reopenedState() {
   return state
 }
 
+function restoredWorkingState() {
+  const state = reopenedState()
+  const payload = normalizeAgentStatusEvent({
+    paneKey,
+    connectionId: null,
+    state: 'working',
+    agentType: 'claude',
+    prompt: 'Previous work',
+    receivedAt: 11_000,
+    stateStartedAt: 11_000,
+    restoredUnconfirmed: true
+  })
+  if (!payload) {
+    throw new Error('Saved hook payload was rejected')
+  }
+  // Hydration marks non-Done rows unconfirmed; IPC carries this outside the parsed hook payload.
+  Object.assign(state.agentStatusByPaneKey[paneKey], payload, { restoredUnconfirmed: true })
+  expect(state.agentStatusByPaneKey[paneKey].sessionBoundary).toBeUndefined()
+  return state
+}
+
 describe('resuming a chat previously completed by tab close', () => {
+  it('keeps workspace-level Done when a restored snapshot says working without a prompt', () => {
+    const state = restoredWorkingState()
+    state.settings!.chatSidebar!.completed = {}
+    state.worktreesByRepo[chatWorktree.repoId] = [{ ...chatWorktree, workspaceStatus: 'completed' }]
+    expect(buildChatSidebarRows(state, [session], 11_000)[0].completed).toBe(true)
+  })
+  it('does not turn a boot snapshot into prompt history on the next transition', () => {
+    const state = restoredWorkingState()
+    const entry = state.agentStatusByPaneKey[paneKey]
+    const next = resolveAgentStatusLiveEntryStateHistory(
+      entry,
+      {
+        state: 'done',
+        sessionBoundary: false
+      },
+      12_000
+    )
+    Object.assign(entry, {
+      state: 'done',
+      sessionBoundary: false,
+      restoredUnconfirmed: undefined,
+      stateHistory: next.history
+    })
+    expect(next.history).toEqual([])
+    expect(buildChatSidebarRows(state, [session], 12_000)[0]).toMatchObject({
+      completed: true,
+      turnStartedAt: 1_500
+    })
+  })
+  it('does not treat a working launch snapshot as a newly submitted prompt', () => {
+    const state = restoredWorkingState()
+    const [row] = buildChatSidebarRows(state, [session], 11_000)
+    expect(row).toMatchObject({ completed: true, timestamp: 2_000, turnStartedAt: 1_500 })
+    expect(
+      chatSidebarPreferencePatch([row], state.settings!.chatSidebar!, 11_000)?.completed
+    ).toBeUndefined()
+  })
+
+  it('clears Done when a real prompt confirms a restored working state with the same state clock', () => {
+    const state = restoredWorkingState()
+    state.agentStatusByPaneKey[paneKey].stateStartedAt = 1_000
+    const store = createTestStore()
+    store.setState(state)
+    store
+      .getState()
+      .setAgentStatus(
+        paneKey,
+        { state: 'working', prompt: 'Continue', agentType: 'claude' },
+        undefined,
+        { updatedAt: 12_000, stateStartedAt: 1_000, turnStartedAt: 12_000 }
+      )
+    expect(store.getState().agentStatusByPaneKey[paneKey]).toMatchObject({
+      stateHistory: [],
+      stateObservedAt: 12_000,
+      turnStartedAt: 12_000
+    })
+    const [row] = buildChatSidebarRows(store.getState(), [session], 12_000)
+    expect(row).toMatchObject({ completed: false, turnStartedAt: 12_000 })
+    expect(
+      chatSidebarPreferencePatch([row], state.settings!.chatSidebar!, 12_000)?.completed?.[
+        sessionKey
+      ]?.done
+    ).toBe(false)
+    store
+      .getState()
+      .setAgentStatus(
+        paneKey,
+        { state: 'done', prompt: 'Continue', agentType: 'claude' },
+        undefined,
+        { updatedAt: 13_000, stateStartedAt: 13_000, turnStartedAt: 12_000 }
+      )
+    // A quick turn can finish before its completion preference patch or transcript scan is saved.
+    expect(buildChatSidebarRows(store.getState(), [session], 13_000)[0]).toMatchObject({
+      completed: false,
+      turnStartedAt: 12_000
+    })
+  })
+
   it('ignores resume metadata writes before and after saving the reopened status', () => {
     const state = reopenedState()
     const touched = { ...session, updatedAt: new Date(12_500).toISOString() }
     const rows = buildChatSidebarRows(state, [touched], 13_000)
-    expect(rows[0]).toMatchObject({ completed: false, timestamp: 2_000 })
+    expect(rows[0]).toMatchObject({ completed: true, timestamp: 2_000 })
     const patch = chatSidebarPreferencePatch(rows, state.settings!.chatSidebar!, 13_000)
     state.settings!.chatSidebar = { ...state.settings!.chatSidebar, ...patch }
     expect(buildChatSidebarRows(state, [], 14_000)[0]).toMatchObject({
-      completed: false,
+      completed: true,
       timestamp: 2_000
     })
   })
 
-  it('returns the replacement tab to In Progress without changing its activity time', () => {
+  it('keeps the replacement tab Done until a new prompt is submitted', () => {
     const state = reopenedState()
     const rows = buildChatSidebarRows(state, [session], 11_000)
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ tabId: 'reopened', completed: false, timestamp: 2_000 })
+    expect(rows[0]).toMatchObject({ tabId: 'reopened', completed: true, timestamp: 2_000 })
     const patch = chatSidebarPreferencePatch(rows, state.settings!.chatSidebar!, 11_000)
-    expect(patch?.completed?.[sessionKey]).toMatchObject({ done: false, activityAt: 2_000 })
+    expect(patch?.completed).toBeUndefined()
     state.settings!.chatSidebar = { ...state.settings!.chatSidebar, ...patch }
-    expect(buildChatSidebarRows(state, [], 12_000)[0].completed).toBe(false)
+    expect(buildChatSidebarRows(state, [], 12_000)[0].completed).toBe(true)
   })
 
-  it('brackets the reopened chat with the other visible workspace immediately', () => {
+  it('does not move an unprompted Done chat into In Progress through a split', () => {
     const state = reopenedState()
     const [reopened] = buildChatSidebarRows(state, [session], 11_000)
     const other = chatRow({
@@ -100,11 +202,12 @@ describe('resuming a chat previously completed by tab close', () => {
     const splits = placeWorkspaceAtEdge([], other.worktree.id, chatWorktree.id, 'right', 'split')
     const items = chatSidebarListItems([reopened, other], state, '', splits)
     expect(items.filter((item) => item.kind === 'heading').map((item) => item.label)).toEqual([
-      'In progress (2)'
+      'In Progress (1)',
+      'Done (1)'
     ])
     expect(items.filter((item) => item.kind === 'chat').map((item) => item.splitId)).toEqual([
-      'split',
-      'split'
+      undefined,
+      undefined
     ])
   })
 
@@ -153,7 +256,7 @@ describe('resuming a chat previously completed by tab close', () => {
     const threePanes = placeWorkspaceAtEdge(split, 'third', 'coding', 'bottom', 'visible')
     const items = chatSidebarListItems([restored, ...siblings], state, '', threePanes)
     expect(items.filter((item) => item.kind === 'heading').map((item) => item.label)).toEqual([
-      'In progress (3)'
+      'In Progress (3)'
     ])
     expect(items.filter((item) => item.kind === 'chat').map((item) => item.splitId)).toEqual([
       'visible',
@@ -198,7 +301,7 @@ describe('resuming a chat previously completed by tab close', () => {
     })
   })
 
-  it('clears a reopened title-only chat marker on a later working state', () => {
+  it('requires turn evidence to clear a reopened title-only chat marker', () => {
     const completion = { activityAt: 2_000, at: 10_000, done: false, closedTabId: 'closed' }
     const row = chatRow({
       id: sessionKey,
@@ -209,13 +312,18 @@ describe('resuming a chat previously completed by tab close', () => {
       state: 'working',
       timestamp: 12_000
     })
-    expect(chatCompletionActivityTime(row, completion)).toBe(12_000)
+    expect(chatCompletionActivityTime(row, completion)).toBe(2_000)
+    expect(
+      chatSidebarPreferencePatch([row], { completed: { [sessionKey]: completion } }, 12_000)
+        ?.completed
+    ).toBeUndefined()
+    row.turnStartedAt = 12_000
     const patch = chatSidebarPreferencePatch(
       [row],
       { completed: { [sessionKey]: completion } },
       12_000
     )
-    expect(patch?.completed?.[sessionKey]).toMatchObject({ done: false, at: 12_000 })
+    expect(patch?.completed?.[sessionKey]).toMatchObject({ done: false, at: 10_000 })
     expect(patch?.completed?.[sessionKey].closedTabId).toBeUndefined()
     expect(
       chatCompletionActivityTime(

@@ -6,8 +6,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatOptionalPrimaryShortcutLabel } from '@/hooks/useShortcutLabel'
 import { translate } from '@/i18n/i18n'
 import { openWorkspaceCreationComposerWithTourHandoff } from '../contextual-tours/workspace-creation-tour-handoff'
-import SidebarWorkspaceOptionsMenu from './SidebarWorkspaceOptionsMenu'
 import { ChatSidebarOptions } from './ChatSidebarOptions'
+import SidebarWorkspaceOptionsMenu from './SidebarWorkspaceOptionsMenu'
 
 function AddProjectButton({
   preserveWorkspaceBoardOpen
@@ -48,10 +48,7 @@ function NewWorkspaceButton({
   // Why primary: workspace.create binds both Mod+N and Mod+Shift+N, and listing
   // every alias in a one-line tooltip reads as noise rather than help.
   const shortcutLabel = formatOptionalPrimaryShortcutLabel('workspace.create', keybindings)
-  const chatsView = useAppStore((s) => s.settings?.chatSidebar?.view === 'chats')
-  const label = chatsView
-    ? 'New chat'
-    : translate('auto.components.sidebar.SidebarHeader.92154beb7e', 'New workspace')
+  const label = translate('auto.components.sidebar.SidebarHeader.92154beb7e', 'New workspace')
 
   // Why the tour handoff here: the tour highlights this button, and it is now
   // the control that performs the action rather than one that opens a menu.
@@ -85,28 +82,26 @@ function NewWorkspaceButton({
 
 export function SidebarHeaderActions({
   onWorkspaceBoardMenuOpenChange,
-  agentsViewActive = false
+  agentsViewActive = false,
+  chatsViewActive = false
 }: {
   onWorkspaceBoardMenuOpenChange: (open: boolean) => void
   agentsViewActive?: boolean
+  chatsViewActive?: boolean
 }): React.JSX.Element {
-  const chatsView = useAppStore((s) => s.settings?.chatSidebar?.view === 'chats')
   return (
     <div className="flex shrink-0 items-center gap-1" data-sidebar-header-actions="">
-      {/* Why both hidden in the agents view: it lists activity, not projects. */}
-      {agentsViewActive ? null : (
-        <>
-          {chatsView ? (
-            <ChatSidebarOptions />
-          ) : (
-            <SidebarWorkspaceOptionsMenu
-              preserveWorkspaceBoardOpen
-              onMenuOpenChange={onWorkspaceBoardMenuOpenChange}
-            />
-          )}
-          <AddProjectButton preserveWorkspaceBoardOpen />
-        </>
+      {/* Why only options swap: the activity view portals its own options button into this slot
+          (SidebarHeader), and keeping Add project means no header button shifts between views. */}
+      {agentsViewActive ? null : chatsViewActive ? (
+        <ChatSidebarOptions />
+      ) : (
+        <SidebarWorkspaceOptionsMenu
+          preserveWorkspaceBoardOpen
+          onMenuOpenChange={onWorkspaceBoardMenuOpenChange}
+        />
       )}
+      <AddProjectButton preserveWorkspaceBoardOpen />
       <NewWorkspaceButton preserveWorkspaceBoardOpen />
     </div>
   )

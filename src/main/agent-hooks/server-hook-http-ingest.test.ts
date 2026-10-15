@@ -157,64 +157,87 @@ describe('AgentHookServer listener replay', () => {
       server.stop()
     }
   })
-  it('ignores local nested Claude Stop while a parent Codex hook status is active', async () => {
-    const server = new AgentHookServer()
-    await server.start({ env: 'production' })
-    try {
-      const env = server.buildPtyEnv()
-      const listener = vi.fn()
-      server.setListener(listener)
-      const postHook = async (
-        source: 'codex' | 'claude',
-        payload: Record<string, unknown>
-      ): Promise<void> => {
-        const response = await fetch(
-          `http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/${source}`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
-            },
-            body: JSON.stringify(buildBody(payload))
-          }
-        )
-        expect(response.status).toBe(204)
-      }
+  it.each(['UserPromptSubmit', 'PreToolUse', 'Stop'])(
+    'ignores local nested Claude %s while retaining the parent Codex session',
+    async (event) => {
+      const server = new AgentHookServer()
+      await server.start({ env: 'production' })
+      try {
+        const env = server.buildPtyEnv()
+        const listener = vi.fn()
+        server.setListener(listener)
+        const postHook = async (
+          source: 'codex' | 'claude',
+          payload: Record<string, unknown>
+        ): Promise<void> => {
+          const response = await fetch(
+            `http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/${source}`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
+              },
+              body: JSON.stringify(buildBody(payload))
+            }
+          )
+          expect(response.status).toBe(204)
+        }
 
-      await postHook('codex', {
-        hook_event_name: 'UserPromptSubmit',
-        prompt: 'parent codex'
-      })
-      await postHook('claude', {
-        hook_event_name: 'Stop',
-        last_assistant_message: 'child finished'
-      })
-
-      expect(server.getStatusSnapshot()).toEqual([
-        expect.objectContaining({
-          paneKey: PANE,
-          state: 'working',
+        await postHook('codex', {
+          hook_event_name: 'UserPromptSubmit',
           prompt: 'parent codex',
-          agentType: 'codex'
+          session_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
         })
-      ])
-      const snapshot = server.getStatusSnapshot()[0]
-      expect(snapshot.lastAssistantMessage).toBeUndefined()
-      expect(listener).toHaveBeenCalledTimes(1)
-      expect(listener).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          payload: expect.objectContaining({
+        const previous = server.getStatusSnapshot()[0]
+        const parentTool = server._getStateForTests().lastToolByPaneKey.get(PANE)
+        await postHook('claude', {
+          hook_event_name: event,
+          prompt: 'child review',
+          tool_name: 'Bash',
+          tool_input: { command: 'review-only' },
+          session_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          last_assistant_message: 'child finished'
+        })
+
+        expect(server.getStatusSnapshot()).toEqual([
+          expect.objectContaining({
+            paneKey: PANE,
             state: 'working',
             prompt: 'parent codex',
             agentType: 'codex'
           })
+        ])
+        const snapshot = server.getStatusSnapshot()[0]
+        expect(snapshot.providerSession).toEqual(previous.providerSession)
+        expect(snapshot.turnStartedAt).toEqual(previous.turnStartedAt)
+        expect(snapshot.lastAssistantMessage).toBeUndefined()
+        expect(server._getStateForTests().lastPromptByPaneKey.get(PANE)).toBe('parent codex')
+        expect(server._getStateForTests().lastToolByPaneKey.get(PANE)).toEqual(parentTool)
+        expect(listener).toHaveBeenCalledTimes(1)
+        expect(listener).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            payload: expect.objectContaining({
+              state: 'working',
+              prompt: 'parent codex',
+              agentType: 'codex'
+            })
+          })
+        )
+        await postHook('codex', {
+          hook_event_name: 'PostToolUse',
+          session_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
         })
-      )
-    } finally {
-      server.stop()
+        expect(server.getStatusSnapshot()[0]).toMatchObject({
+          prompt: 'parent codex',
+          agentType: 'codex',
+          providerSession: previous.providerSession
+        })
+      } finally {
+        server.stop()
+      }
     }
-  })
+  )
 
   it('does not apply Claude background evidence from a rejected local status', async () => {
     const server = new AgentHookServer()

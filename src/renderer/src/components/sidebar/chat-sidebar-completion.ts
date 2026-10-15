@@ -2,28 +2,21 @@ import type {
   ChatSidebarCompletion,
   ChatSidebarSettings
 } from '../../../../shared/chat-sidebar-settings'
-import type { ChatSidebarRow } from './chat-sidebar-types'
+import { chatHasWorkingTurn, type ChatSidebarRow } from './chat-sidebar-types'
 
-type CompletionRow = Pick<ChatSidebarRow, 'tabId' | 'turnStartedAt' | 'activityFromState' | 'state'>
-
-function reopenedClosedChat(row: CompletionRow, completion: ChatSidebarCompletion): boolean {
-  return Boolean(completion.closedTabId && row.tabId && row.tabId !== completion.closedTabId)
-}
+type CompletionRow = Pick<
+  ChatSidebarRow,
+  'tabId' | 'turnStartedAt' | 'activityFromState' | 'state' | 'promptBackedWorking'
+>
 
 export function isChatCompleted(
   row: CompletionRow & Pick<ChatSidebarRow, 'worktree'>,
   completion: ChatSidebarCompletion | undefined
 ): boolean {
   if (!completion) {
-    return row.worktree.workspaceStatus === 'completed' && row.state !== 'working'
+    return row.worktree.workspaceStatus === 'completed' && !chatHasWorkingTurn(row)
   }
-  return (
-    completion.done !== false &&
-    !reopenedClosedChat(row, completion) &&
-    row.turnStartedAt <= completion.at &&
-    // Why: title-derived rows have no turn clock; working after the marked turn is a new turn.
-    (!row.activityFromState || row.state !== 'working' || completion.working === true)
-  )
+  return completion.done !== false && row.turnStartedAt <= completion.at
 }
 
 export function chatCompletionActivityTime(
@@ -32,36 +25,22 @@ export function chatCompletionActivityTime(
 ): number {
   // Why: resume writes can advance the transcript timestamp without a new prompt.
   return completion &&
-    (row.completed ||
-      (reopenedClosedChat(row, completion) &&
-        row.turnStartedAt <= completion.at &&
-        !(row.activityFromState && row.state === 'working' && completion.working !== true)))
+    (row.completed || (completion.closedTabId && row.turnStartedAt <= completion.at))
     ? completion.activityAt
     : row.timestamp
 }
 
-/** Persist a real prompt or replacement tab without treating resume as activity. */
+/** Only a proven new turn clears Done; a replacement tab is still the same conversation. */
 export function refreshedChatCompletion(
   row: CompletionRow,
   completion: ChatSidebarCompletion,
-  now: number
+  _now: number
 ): ChatSidebarCompletion | null {
   if (row.turnStartedAt > completion.at && (completion.done !== false || completion.closedTabId)) {
     return { ...completion, closedTabId: undefined, done: false }
   }
-  if (
-    row.activityFromState &&
-    row.state === 'working' &&
-    completion.working !== true &&
-    (completion.done !== false || completion.closedTabId)
-  ) {
-    return { ...completion, closedTabId: undefined, at: now, done: false }
-  }
   if (completion.done === false) {
     return null
-  }
-  if (reopenedClosedChat(row, completion)) {
-    return { ...completion, done: false }
   }
   if (row.activityFromState) {
     if (completion.working === true && row.state !== 'working') {

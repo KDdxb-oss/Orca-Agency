@@ -35,6 +35,10 @@ export class OrcaRuntimeWithFitOverrideListeners extends OrcaRuntimeWithStopRequ
 
   protected readonly mobileNotifications = new RuntimeMobileNotificationController()
 
+  flushMobileNotificationDismissals(): Promise<void> {
+    return this.mobileNotifications.flushDismissalStore()
+  }
+
   protected ptysById = new Map<string, RuntimePtyWorktreeRecord>()
 
   protected readonly pairedRendererSessionOwnedPtyIds = new Set<string>()

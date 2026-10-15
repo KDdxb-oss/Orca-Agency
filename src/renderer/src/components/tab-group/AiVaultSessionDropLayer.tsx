@@ -1,3 +1,4 @@
+import { getAiVaultResumeWorkspaceWslDistro } from '@/lib/ai-vault-resume-shell'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { toast } from 'sonner'
 import {
@@ -204,7 +205,8 @@ export default function AiVaultSessionDropLayer({
           sessionFilePath: payload.sessionFilePath ?? null,
           sessionExecutionHostId: payload.sessionExecutionHostId ?? null,
           targetStatus,
-          targetExecutionHostId
+          targetExecutionHostId,
+          targetWslDistro: getAiVaultResumeWorkspaceWslDistro(state, worktreeId)
         })
       ) {
         toast.error(
@@ -266,7 +268,10 @@ export default function AiVaultSessionDropLayer({
           const providerSession = getAiVaultAgentProviderSession({
             agent: payload.agent,
             sessionId: payload.sessionId,
-            filePath: payload.sessionFilePath
+            filePath: payload.sessionFilePath,
+            codexHome: result.useRealCodexHome
+              ? null
+              : (result.substituteCodexHome ?? payload.codexHome)
           })
           const launchResult = launchAiVaultSessionInNewTab({
             agent: payload.agent,

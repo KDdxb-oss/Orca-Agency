@@ -8,6 +8,7 @@ import {
   wrapShellSpawnForMacosTccAttribution
 } from './macos-tcc-login-shell'
 import { formatLocalPtyEnvironmentDiag } from './working-directory-validation'
+import { windowsConptySpawnOptions } from './windows-conpty-backend'
 
 export {
   formatLocalPtyEnvironmentDiag,
@@ -168,14 +169,6 @@ export type ShellSpawnResult = {
  * executables with per-shell args, so when the primary fails we retry with the
  * next safe shell instead of leaving the user with no terminal.
  */
-// Why: match the daemon spawn path (pty-subprocess.ts) — the bundled ConPTY
-// has the modern wrap-marker behavior xterm expects; legacy system ConPTY can
-// corrupt full-width TUI rows in scrollback. Without this, degraded-mode and
-// fresh-local spawns silently behave differently from daemon terminals.
-function windowsConptyDllOptions(): { useConptyDll: true } | Record<string, never> {
-  return process.platform === 'win32' ? { useConptyDll: true } : {}
-}
-
 function spawnWindowsFallbackChain(
   params: ShellSpawnParams,
   primaryError: string
@@ -191,7 +184,7 @@ function spawnWindowsFallbackChain(
         rows,
         cwd: attempt.effectiveCwd,
         env,
-        ...windowsConptyDllOptions()
+        ...windowsConptySpawnOptions()
       })
       console.warn(
         `[pty] Primary shell "${params.shellPath}" failed (${primaryError}), fell back to "${attempt.shellPath}"`
@@ -241,7 +234,7 @@ export function spawnShellWithFallback(params: ShellSpawnParams): ShellSpawnResu
           rows,
           cwd,
           env,
-          ...windowsConptyDllOptions()
+          ...windowsConptySpawnOptions()
         }),
         shellPath,
         reportsChildExitStatus: hostReportsChildExitStatus(wrapped.file)

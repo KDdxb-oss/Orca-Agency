@@ -276,6 +276,11 @@ export class OrcaRuntimeWithSyncWindowGraph extends OrcaRuntimeWithAttachWindow 
     }
     const isAuthoritativeGraphPublisher = windowId === this.authoritativeWindowId
     this.markGraphReady(windowId)
+    if (!graphWasReady) {
+      for (const ptyId of this.restoredOrchestrationAuthorityByPtyId.keys()) {
+        this.reconcileRestoredWorkingTitleMonitor(ptyId)
+      }
+    }
     if (
       isAuthoritativeGraphPublisher &&
       (windowId === HEADLESS_RUNTIME_WINDOW_ID || graph.mobileSessionTabs !== undefined)

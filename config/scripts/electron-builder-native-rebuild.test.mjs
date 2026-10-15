@@ -98,4 +98,18 @@ describe('electron-builder native rebuild hook', () => {
     expect(() => buildNativeRebuildArgs({ arch: 'x64' })).toThrow(/platform/)
     expect(() => buildNativeRebuildArgs({ platform: { nodeName: 'linux' } })).toThrow(/arch/)
   })
+
+  it('requires the ARM64 policy to match the Windows artifact architecture', () => {
+    const context = { platform: { nodeName: 'win32' }, arch: 'arm64' }
+    expect(() => buildNativeRebuildArgs(context, { environment: {} })).toThrow(/ARM64/)
+    expect(
+      buildNativeRebuildArgs(context, { environment: { ORCA_WINDOWS_ARM64_PACKAGE: '1' } })
+    ).toContain('--arch=arm64')
+    expect(() =>
+      buildNativeRebuildArgs(
+        { ...context, arch: 'x64' },
+        { environment: { ORCA_WINDOWS_ARM64_PACKAGE: '1' } }
+      )
+    ).toThrow(/ARM64/)
+  })
 })

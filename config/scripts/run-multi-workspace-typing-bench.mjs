@@ -19,6 +19,7 @@ const knobByFlag = {
   '--visited-workspaces': 'ORCA_TYPING_BENCH_VISITED_WORKSPACES',
   '--load-workspaces': 'ORCA_TYPING_BENCH_LOAD_WORKSPACES',
   '--panes': 'ORCA_TYPING_BENCH_LOAD_PANES',
+  '--visible-panes': 'ORCA_TYPING_BENCH_VISIBLE_PANES',
   '--rate-kbps': 'ORCA_TYPING_BENCH_RATE_KBPS',
   '--keys': 'ORCA_TYPING_BENCH_KEYS',
   '--cadence-ms': 'ORCA_TYPING_BENCH_KEY_CADENCE_MS',

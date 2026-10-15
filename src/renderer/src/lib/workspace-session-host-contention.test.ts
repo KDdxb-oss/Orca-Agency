@@ -141,6 +141,29 @@ describe('mergeWorkspaceSessionsWithHostShadow', () => {
     expect(Object.keys(merged.session.tabsByWorktree).sort()).toEqual(['repo-a::/a', 'repo-b::/b'])
     expect(merged.shadow).toEqual({})
   })
+
+  it('restores runtime tabs when local holds only a visit marker for the same workspace', () => {
+    const runtimeHost: ExecutionHostId = 'runtime:env-1'
+    const merged = mergeWorkspaceSessionsWithHostShadow({
+      local: {
+        ...sessionWithTabs({}),
+        lastVisitedAtByWorktreeId: { [SHARED_ID]: 1 }
+      },
+      [runtimeHost]: {
+        ...sessionWithTabs({ [SHARED_ID]: [tab('runtime-tab')] }),
+        localOnlyScrollbackByTabId: { 'runtime-tab': { 'pane:1': 'saved scrollback' } }
+      }
+    })
+
+    expect(merged.session.tabsByWorktree[SHARED_ID]?.map((entry) => entry.id)).toEqual([
+      'runtime-tab'
+    ])
+    expect(merged.session.localOnlyScrollbackByTabId?.['runtime-tab']).toEqual({
+      'pane:1': 'saved scrollback'
+    })
+    expect(merged.primaryHostBySessionKey[SHARED_ID]).toBe(runtimeHost)
+    expect(merged.contestedSessionKeys.has(SHARED_ID)).toBe(false)
+  })
 })
 
 type SessionWriteMock = Mock<

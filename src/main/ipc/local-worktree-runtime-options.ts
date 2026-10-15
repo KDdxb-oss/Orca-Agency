@@ -4,8 +4,9 @@ import {
   getLocalProjectWorktreeGitOptions,
   type LocalProjectWorktreeGitOptions
 } from '../project-runtime-git-options'
-import { splitWorktreeId } from '../../shared/worktree/id'
+import { splitWorktreeIdForFilesystem } from '../../shared/worktree/id'
 import type { Repo } from '../../shared/repo-types'
+import { getRepoExecutionHostId, LOCAL_EXECUTION_HOST_ID } from '../../shared/execution-host'
 
 function comparableLocalPath(value: string): string {
   const normalized = resolve(value)
@@ -28,7 +29,7 @@ function collectRepoIdsWithRegisteredWorktreeMeta(
     typeof store.getAllWorktreeMeta === 'function' ? store.getAllWorktreeMeta() : {}
   const repoIds = new Set<string>()
   for (const worktreeId of Object.keys(worktreeMeta)) {
-    const parsed = splitWorktreeId(worktreeId)
+    const parsed = splitWorktreeIdForFilesystem(worktreeId)
     if (parsed && candidatePaths.has(comparableLocalPath(parsed.worktreePath))) {
       repoIds.add(parsed.repoId)
     }
@@ -53,7 +54,7 @@ export function getLocalRepoForRegisteredWorktree(
     .getRepos()
     .find(
       (repo) =>
-        !repo.connectionId &&
+        getRepoExecutionHostId(repo) === LOCAL_EXECUTION_HOST_ID &&
         (candidatePaths.has(comparableLocalPath(repo.path)) ||
           (repoIdsWithMeta ??= collectRepoIdsWithRegisteredWorktreeMeta(store, candidatePaths)).has(
             repo.id

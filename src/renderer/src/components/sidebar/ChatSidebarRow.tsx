@@ -73,7 +73,7 @@ export const ChatSidebarRow = memo(function ChatSidebarRow({
           data-chat-sidebar-id={row.id}
           data-worktree-id={row.worktree.id}
           data-chat-completed={row.completed}
-          data-chat-state={row.state}
+          data-chat-state={row.displayState ?? row.state}
           data-chat-workspace-group={groupId}
           data-chat-split-group={splitId}
           data-chat-sub-tab={subTab ? 'true' : undefined}
@@ -138,7 +138,11 @@ export const ChatSidebarRow = memo(function ChatSidebarRow({
               void setChatCompleted(row, !row.completed)
             }}
           >
-            {row.completed ? <Check className="size-3.5" /> : <AgentStateDot state={row.state} />}
+            {row.completed ? (
+              <Check className="size-3.5" />
+            ) : (
+              <AgentStateDot state={row.displayState ?? row.state} />
+            )}
           </Button>
           <div className="min-w-0 flex-1">
             <div className="flex h-5 min-w-0 items-center gap-1 leading-4">
@@ -161,7 +165,7 @@ export const ChatSidebarRow = memo(function ChatSidebarRow({
                 className="shrink-0 text-[11px] tabular-nums text-muted-foreground"
                 title={row.timestamp ? new Date(row.timestamp).toLocaleString() : undefined}
               >
-                {row.state === 'working'
+                {(row.displayState ?? row.state) === 'working'
                   ? 'Now'
                   : row.timestamp
                     ? formatShortTimeAgo(row.timestamp, now)

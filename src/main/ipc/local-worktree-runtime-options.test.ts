@@ -10,16 +10,16 @@ vi.mock('../../shared/worktree/id', async (importOriginal) => {
   const actual = await importOriginal<typeof WorktreeIdModule>()
   return {
     ...actual,
-    splitWorktreeId: (worktreeId: string): ParsedWorktreeId | null => {
+    splitWorktreeIdForFilesystem: (worktreeId: string): ParsedWorktreeId | null => {
       counter.splitCalls += 1
-      return actual.splitWorktreeId(worktreeId)
+      return actual.splitWorktreeIdForFilesystem(worktreeId)
     }
   }
 })
 
 const { getLocalRepoForRegisteredWorktree } = await import('./local-worktree-runtime-options')
 
-type TestRepo = { id: string; path: string; connectionId?: string }
+type TestRepo = { id: string; path: string; connectionId?: string; executionHostId?: string }
 
 const makeStore = (
   repos: readonly TestRepo[],
@@ -45,6 +45,25 @@ beforeEach(() => {
 })
 
 describe('getLocalRepoForRegisteredWorktree', () => {
+  it('resolves an extra folder workspace without treating its UUID as part of the path', () => {
+    const { store } = makeStore(
+      [{ id: 'folder', path: '/folder' }],
+      ['folder::/extra::workspace:11111111-1111-1111-1111-111111111111']
+    )
+    expect(getLocalRepoForRegisteredWorktree(store, '/extra', '/extra')?.id).toBe('folder')
+  })
+
+  it('honors explicit host ownership before a legacy connection id', () => {
+    const { store } = makeStore(
+      [
+        { id: 'remote', path: '/same', executionHostId: 'ssh:remote' },
+        { id: 'local', path: '/same', executionHostId: 'local', connectionId: 'stale' }
+      ],
+      []
+    )
+    expect(getLocalRepoForRegisteredWorktree(store, '/same', '/same')?.id).toBe('local')
+  })
+
   it('walks the worktree meta table once, not once per repo', () => {
     // Worst case: the owning repo is last, so every earlier repo used to force a full rescan.
     const repoCount = 10

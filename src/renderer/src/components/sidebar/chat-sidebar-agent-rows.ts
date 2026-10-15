@@ -7,6 +7,7 @@ import { rowConversationName } from '../dashboard/dashboard-card-labels'
 import { lastEnteredDoneAt } from '../dashboard/agent-finished-timestamp'
 import type { DashboardAgentRow } from '../dashboard/useDashboardData'
 import { getAgentRowPrimaryText } from '@/lib/agent-row-primary-text'
+import { agentRowDisplayDotState } from '@/lib/agent-row-dot-state'
 import { agentStatusEvidenceObservedAt } from '../../../../shared/agent-status-freshness'
 import type { AgentStatusEntry } from '../../../../shared/agent-status-types'
 import type { AiVaultSession } from '../../../../shared/ai-vault-types'
@@ -28,7 +29,10 @@ import { resumedClaudeSession, savedClaudeResume } from './chat-sidebar-claude-r
 
 /** When the latest working turn began; heartbeats and session-boundary snapshots never move it. */
 function latestTurnStart(entry: AgentStatusEntry): number {
-  let latest = entry.state === 'working' ? entry.stateStartedAt : 0
+  let latest =
+    !entry.sessionBoundary && !entry.restoredUnconfirmed
+      ? (entry.turnStartedAt ?? (entry.state === 'working' ? entry.stateStartedAt : 0))
+      : 0
   for (const item of entry.stateHistory) {
     if (item.state === 'working' && item.startedAt > latest) {
       latest = item.startedAt
@@ -197,7 +201,7 @@ export function buildAgentChatRows(args: {
     const sessionAt = session ? chatSessionTime(session) : agent.tab.createdAt
     const title =
       rowConversationName(
-        nameSource,
+        soleChat ? nameSource : { ...nameSource, tab: { ...nameSource.tab, customTitle: null } },
         state.settings?.tabAutoGenerateTitle === true,
         state.terminalLayoutsByTabId[agent.tab.id],
         state.runtimePaneTitlesByTabId[agent.tab.id]
@@ -210,13 +214,17 @@ export function buildAgentChatRows(args: {
       sessionKey,
       agentType: sessionAgent ?? agent.agentType,
       title,
-      manualTitle: agent.tab.customTitle?.trim() || null,
+      manualTitle: soleChat ? agent.tab.customTitle?.trim() || null : null,
       folder: args.folder,
       worktree,
       hostId,
       tabId: resident ? agent.tab.id : null,
       paneKey: resident ? agent.paneKey : null,
       session,
+      promptBackedWorking:
+        agent.state === 'working' &&
+        !agent.entry.sessionBoundary &&
+        !agent.entry.restoredUnconfirmed,
       timestamp: resumed ? sessionAt : rowTimestamp(agent, sessionAt),
       turnStartedAt: resumed
         ? chatSessionHumanTurnTime(resumed)
@@ -226,6 +234,7 @@ export function buildAgentChatRows(args: {
           ),
       activityFromState: !resumed && agent.startedAt === 0,
       state: agent.state,
+      displayState: agentRowDisplayDotState(agent),
       completed: false,
       ownsWorkspaceName: false,
       liveSession: chatLiveSession(agent.agentType, providerSession, title),

@@ -131,6 +131,7 @@ const SidebarHeader = React.memo(function SidebarHeader({
         <SidebarHeaderActions
           onWorkspaceBoardMenuOpenChange={onWorkspaceBoardMenuOpenChange}
           agentsViewActive={agentsViewActive}
+          chatsViewActive={chatsView && !agentsViewActive}
         />
       </div>
     </div>

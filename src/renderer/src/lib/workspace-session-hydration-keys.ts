@@ -12,7 +12,7 @@ export type WorkspaceSessionHydrationOptions = {
 
 // Worktree-keyed fields carrying restorable chrome — a repo appears here only if it has live
 // session state (open tabs, editors, browser) to restore.
-const WORKSPACE_CHROME_SESSION_FIELDS = [
+export const WORKSPACE_CHROME_SESSION_FIELDS = [
   'tabsByWorktree',
   'openFilesByWorktree',
   'browserTabsByWorktree',

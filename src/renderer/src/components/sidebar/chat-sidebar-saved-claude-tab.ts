@@ -86,6 +86,7 @@ export function savedClaudeTabRow(args: {
     timestamp: chatSessionTime(session),
     turnStartedAt: chatSessionHumanTurnTime(session),
     activityFromState: false,
+    promptBackedWorking: false,
     state: 'idle',
     completed: false,
     ownsWorkspaceName: false,

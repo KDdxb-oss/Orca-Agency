@@ -1,38 +1,61 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AiVaultSession } from '../../../shared/ai-vault-types'
-import { prepareAiVaultSessionForResume } from './ai-vault-session-resume-preparation'
+import {
+  dropDeletedSshResumeCwd,
+  prepareAiVaultSessionForFork,
+  prepareAiVaultSessionForResume
+} from './ai-vault-session-resume-preparation'
 
 afterEach(() => {
   vi.unstubAllGlobals()
 })
 
 describe('prepareAiVaultSessionForResume', () => {
-  it('moves a closed Claude chat only after its owning host prepares the same session', async () => {
+  it('prepares a filed Claude chat in its selected folder before launch', async () => {
     const prepareSessionResume = vi.fn().mockResolvedValue({
       useRealCodexHome: false,
-      relocatedClaudeSession: { cwd: '/actual/new', filePath: '/projects/new/chat.jsonl' }
+      relocatedClaudeSession: {
+        cwd: '/selected-folder',
+        filePath: '/claude/projects/selected-folder/session-1.jsonl'
+      }
     })
     stubPreparation(prepareSessionResume)
-    const original = { ...session({ agent: 'claude' }), resumeCwd: '/shortcut/new' }
-    const prepared = await prepareAiVaultSessionForResume(original)
-    expect(prepared).toMatchObject({
-      sessionId: original.sessionId,
-      cwd: '/actual/new',
-      filePath: '/projects/new/chat.jsonl',
+    const saved = {
+      ...session({
+        agent: 'claude',
+        cwd: '/original-folder',
+        filePath: '/claude/projects/original-folder/session-1.jsonl',
+        resumeCommand: 'cd /original-folder && claude --resume session-1'
+      }),
+      resumeCwd: '/selected-folder'
+    }
+
+    await expect(prepareAiVaultSessionForResume(saved)).resolves.toMatchObject({
+      sessionId: saved.sessionId,
+      cwd: '/selected-folder',
+      filePath: '/claude/projects/selected-folder/session-1.jsonl',
       resumeCommand: ''
     })
-    expect(prepared.resumeCwd).toBeUndefined()
-    expect(prepareSessionResume).toHaveBeenCalledWith(
-      expect.objectContaining({ resumeCwd: '/shortcut/new' })
+    expect(saved.cwd).toBe('/original-folder')
+    expect(prepareSessionResume).toHaveBeenCalledWith({
+      agent: 'claude',
+      sessionId: saved.sessionId,
+      filePath: saved.filePath,
+      codexHome: saved.codexHome,
+      executionHostId: 'local',
+      resumeCwd: '/selected-folder'
+    })
+  })
+
+  it('refuses to launch a filed Claude chat when its folder cannot be prepared', async () => {
+    stubPreparation(vi.fn().mockResolvedValue({ useRealCodexHome: false }))
+    const saved = { ...session({ agent: 'claude' }), resumeCwd: '/selected-folder' }
+
+    await expect(prepareAiVaultSessionForResume(saved)).rejects.toThrow(
+      'Could not prepare this Claude chat in its selected folder.'
     )
   })
 
-  it('does not silently launch in the wrong folder when an older or SSH host cannot prepare it', async () => {
-    stubPreparation(vi.fn().mockResolvedValue({ useRealCodexHome: false }))
-    await expect(
-      prepareAiVaultSessionForResume({ ...session({ agent: 'claude' }), resumeCwd: '/new' })
-    ).rejects.toThrow('cannot move a Claude chat')
-  })
   it('returns a real-home launch identity only after targeted materialization succeeds', async () => {
     const prepareSessionResume = vi.fn().mockResolvedValue({ useRealCodexHome: true })
     stubPreparation(prepareSessionResume)
@@ -118,6 +141,89 @@ describe('prepareAiVaultSessionForResume', () => {
 
     await expect(prepareAiVaultSessionForResume(current)).resolves.toBe(current)
     expect(prepareSessionResume).not.toHaveBeenCalled()
+  })
+})
+
+describe('prepareAiVaultSessionForFork', () => {
+  // A fork of a chat-owned conversation must run under the selected account, as a resume does.
+  it('repins a chat-owned per-account session, asking the host as a fork', async () => {
+    const prepareSessionResume = vi.fn().mockResolvedValue({
+      useRealCodexHome: false,
+      substituteCodexHome: '/tmp/orca/codex-accounts/account-2/home'
+    })
+    stubPreparation(prepareSessionResume)
+    const owned = session({
+      codexHome: '/tmp/orca/codex-accounts/account-1/home',
+      structuredSession: { sessionId: 'session-1', workspaceId: 'worktree-1' }
+    })
+
+    const prepared = await prepareAiVaultSessionForFork(owned)
+
+    expect(prepared.codexHome).toBe('/tmp/orca/codex-accounts/account-2/home')
+    expect(prepareSessionResume).toHaveBeenCalledWith({
+      agent: 'codex',
+      sessionId: owned.sessionId,
+      filePath: owned.filePath,
+      codexHome: owned.codexHome,
+      executionHostId: 'local',
+      fork: true
+    })
+  })
+
+  it('does not ask the host for a home that needs no preparation', async () => {
+    const prepareSessionResume = vi.fn()
+    stubPreparation(prepareSessionResume)
+    const owned = session({
+      agent: 'claude',
+      codexHome: null,
+      structuredSession: { sessionId: 'session-1', workspaceId: 'worktree-1' }
+    })
+
+    await expect(prepareAiVaultSessionForFork(owned)).resolves.toBe(owned)
+    expect(prepareSessionResume).not.toHaveBeenCalled()
+  })
+})
+
+describe('dropDeletedSshResumeCwd', () => {
+  it('leaves a live SSH session alone, scanner command and all', async () => {
+    const pathExists = vi.fn().mockResolvedValue(true)
+    vi.stubGlobal('window', { api: { fs: { pathExists } } })
+    const remote = session({ executionHostId: 'ssh:server-1', cwd: '/home/ada/wt/feat-x' })
+
+    // Why: dropping the cwd here would strand every ordinary remote resume at the workspace root.
+    await expect(dropDeletedSshResumeCwd(remote)).resolves.toBe(remote)
+    expect(pathExists).toHaveBeenCalledWith({
+      filePath: '/home/ada/wt/feat-x',
+      connectionId: 'server-1'
+    })
+  })
+
+  it('never probes a host for a local session', async () => {
+    const pathExists = vi.fn()
+    vi.stubGlobal('window', { api: { fs: { pathExists } } })
+    const local = session({ cwd: '/repo' })
+
+    await expect(dropDeletedSshResumeCwd(local)).resolves.toBe(local)
+    expect(pathExists).not.toHaveBeenCalled()
+  })
+
+  it('keeps the recorded folder when the SSH host cannot answer', async () => {
+    const pathExists = vi.fn().mockRejectedValue(new Error('CONNECTION_LOST'))
+    vi.stubGlobal('window', { api: { fs: { pathExists } } })
+    const remote = session({ executionHostId: 'ssh:server-1', cwd: '/home/ada/wt/feat-x' })
+
+    // Why: losing the host is not evidence the folder is gone (ssh-execution-boundary.md).
+    await expect(dropDeletedSshResumeCwd(remote)).resolves.toBe(remote)
+    expect(pathExists).toHaveBeenCalled()
+  })
+
+  it('keeps the recorded folder for an agent that can only resume there', async () => {
+    const pathExists = vi.fn().mockResolvedValue(false)
+    vi.stubGlobal('window', { api: { fs: { pathExists } } })
+    const kimi = session({ agent: 'kimi', executionHostId: 'ssh:server-1', cwd: '/home/ada/wt/x' })
+
+    // Why: kimi-cli 1.52 silently opens a new empty session with the same id from any other folder.
+    await expect(dropDeletedSshResumeCwd(kimi)).resolves.toBe(kimi)
   })
 })
 

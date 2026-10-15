@@ -32,12 +32,24 @@ export async function prepareClaudeFolderResume(
     throw new Error('Could not locate the original Claude session. Its files were not changed.')
   }
   // Why: Claude resolves junctions before selecting its project bucket.
-  const cwd = await realpath(args.resumeCwd)
+  const cwd = await realpath(args.resumeCwd).catch((error: unknown) => {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      throw new Error(
+        'The selected chat folder no longer exists. Choose an existing folder to reopen this chat.'
+      )
+    }
+    throw error
+  })
   if (!(await stat(cwd)).isDirectory()) {
     throw new Error('The selected chat folder is not a directory.')
   }
   const directory = path.join(projects, encodeClaudeProjectPath(cwd))
-  if (path.dirname(source) === directory) {
+  const sourceDirectory = path.dirname(source)
+  if (
+    process.platform === 'win32'
+      ? sourceDirectory.toLowerCase() === directory.toLowerCase()
+      : sourceDirectory === directory
+  ) {
     return { useRealCodexHome: false, relocatedClaudeSession: { cwd, filePath: source } }
   }
   if (path.basename(source) !== `${args.sessionId}.jsonl`) {
@@ -56,7 +68,30 @@ export async function prepareClaudeFolderResume(
         throw error
       }
       const [original, existing] = await Promise.all([readFile(source), readFile(destination)])
-      if (!original.equals(existing)) {
+      // Why: a Claude continuation may append to the exclusive copy before the saved list rescans.
+      const appendedLines = existing
+        .subarray(original.length)
+        .toString('utf8')
+        .trimEnd()
+        .split('\n')
+      const continued =
+        original.length > 0 &&
+        original.at(-1) === 10 &&
+        existing.length > original.length &&
+        existing.subarray(0, original.length).equals(original) &&
+        appendedLines.every((line) => {
+          try {
+            const record: unknown = JSON.parse(line)
+            return (
+              record !== null &&
+              typeof record === 'object' &&
+              (!('sessionId' in record) || record.sessionId === args.sessionId)
+            )
+          } catch {
+            return false
+          }
+        })
+      if (!original.equals(existing) && !continued) {
         throw new Error(
           'This folder already contains another saved version of that Claude chat. The originals are unchanged; open that version before moving again.'
         )

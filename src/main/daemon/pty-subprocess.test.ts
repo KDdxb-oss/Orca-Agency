@@ -1,9 +1,10 @@
 // Spawn setup: node-pty launch options, Unix shell resolution and daemon cwd repair.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { release, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type * as LocalPtyUtils from '../providers/local-pty-utils'
+import { selectWindowsConptyBackend } from '../providers/windows-conpty-backend'
 
 const {
   spawnMock,
@@ -304,7 +305,7 @@ describe('createPtySubprocess', () => {
     }
   })
 
-  it('uses bundled ConPTY for native Windows daemon terminals', async () => {
+  it('uses the selected ConPTY backend for native Windows daemon terminals', async () => {
     const proc = mockPtyProcess()
     spawnMock.mockReturnValue(proc)
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')
@@ -327,7 +328,15 @@ describe('createPtySubprocess', () => {
     expect(spawnMock).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(Array),
-      expect.objectContaining({ useConptyDll: true })
+      expect.objectContaining({
+        useConptyDll:
+          selectWindowsConptyBackend({
+            platform: 'win32',
+            arch: process.arch,
+            osRelease: release(),
+            override: process.env.ORCA_WINDOWS_CONPTY_BACKEND
+          }) === 'bundled'
+      })
     )
   })
 

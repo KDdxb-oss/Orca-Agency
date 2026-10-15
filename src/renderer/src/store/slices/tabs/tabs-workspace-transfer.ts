@@ -5,6 +5,9 @@ import { buildActiveSurfacePatch } from './tabs-surface'
 import { parsePaneKey } from '../../../../../shared/stable-pane-id'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { moveParkedTerminalTabWorkspace } from '@/components/terminal-pane/terminal-parked-watcher-registry'
+import { normalizeRuntimePathForComparison } from '../../../../../shared/cross-platform-path'
+import { getConnectionIdFromState } from '@/lib/connection-owner-resolution'
+import { applyTabOrderSortValues } from './tabs-tab-order'
 
 /** Move the surface, retaining its terminal, pane identities, drafts and provider session. */
 export function createTabsWorkspaceTransferActions(
@@ -12,7 +15,7 @@ export function createTabsWorkspaceTransferActions(
   get: TabsSliceGet
 ): Pick<TabsSlice, 'moveTerminalTabToWorkspace'> {
   return {
-    moveTerminalTabToWorkspace: (tabId, destinationId) => {
+    moveTerminalTabToWorkspace: (tabId, destinationId, options) => {
       let moved = false
       let sourceWorkspaceId: string | null = null
       let terminalTabId: string | null = null
@@ -26,7 +29,9 @@ export function createTabsWorkspaceTransferActions(
         const sourceGroup = state.groupsByWorktree[sourceId]?.find(
           (item) => item.id === tab.groupId
         )
-        const targetGroup = state.groupsByWorktree[destinationId]?.[0]
+        const targetGroup = options?.groupId
+          ? state.groupsByWorktree[destinationId]?.find((group) => group.id === options.groupId)
+          : state.groupsByWorktree[destinationId]?.[0]
         const source = state.getKnownWorktreeById(sourceId, 'local')
         const destination = state.getKnownWorktreeById(destinationId, 'local')
         if (
@@ -35,13 +40,38 @@ export function createTabsWorkspaceTransferActions(
           !terminal ||
           !sourceGroup ||
           !targetGroup ||
+          getConnectionIdFromState(state, sourceId) !== null ||
+          getConnectionIdFromState(state, destinationId) !== null ||
           (tab.executionHostId && tab.executionHostId !== 'local') ||
-          (state.unifiedTabsByWorktree[destinationId]?.length ?? 0) > 0 ||
-          (state.tabsByWorktree[destinationId]?.length ?? 0) > 0
+          ((state.unifiedTabsByWorktree[destinationId]?.length ?? 0) > 0 &&
+            normalizeRuntimePathForComparison(source.path) !==
+              normalizeRuntimePathForComparison(destination.path))
         ) {
           return state
         }
         const sourceOrder = sourceGroup.tabOrder.filter((id) => id !== tabId)
+        const targetOrder = targetGroup.tabOrder.filter((id) => id !== tabId)
+        targetOrder.splice(
+          Math.max(0, Math.min(options?.index ?? targetOrder.length, targetOrder.length)),
+          0,
+          tabId
+        )
+        const destinationOrder = state.groupsByWorktree[destinationId].flatMap((group) =>
+          group.id === targetGroup.id ? targetOrder : group.tabOrder
+        )
+        const destinationTabs = applyTabOrderSortValues(
+          [
+            ...(state.unifiedTabsByWorktree[destinationId] ?? []),
+            { ...tab, worktreeId: destinationId, groupId: targetGroup.id }
+          ],
+          destinationOrder
+        ).sort((a, b) => a.sortOrder - b.sortOrder)
+        const terminalOrder = new Map(
+          destinationTabs
+            .filter((item) => item.contentType === 'terminal')
+            .map((item, index) => [item.entityId, index])
+        )
+        const legacyOrder = destinationTabs.map((item) => item.entityId)
         const removeSourceGroup =
           sourceOrder.length === 0 && state.groupsByWorktree[sourceId].length > 1
         const nextSourceGroups = state.groupsByWorktree[sourceId].map((group) =>
@@ -75,20 +105,24 @@ export function createTabsWorkspaceTransferActions(
             ...state.tabsByWorktree,
             [sourceId]: state.tabsByWorktree[sourceId].filter((item) => item.id !== terminal.id),
             [destinationId]: [
+              ...(state.tabsByWorktree[destinationId] ?? []),
               {
                 ...terminal,
                 worktreeId: destinationId,
                 startupCwd: terminal.startupCwd ?? source.path,
+                workspaceMoveRevision: (terminal.workspaceMoveRevision ?? 0) + 1,
                 relocatedFromWorktreeIds: [
                   ...new Set([...(terminal.relocatedFromWorktreeIds ?? []), sourceId])
                 ]
               }
             ]
+              .map((item) => ({ ...item, sortOrder: terminalOrder.get(item.id) ?? item.sortOrder }))
+              .sort((a, b) => a.sortOrder - b.sortOrder)
           },
           unifiedTabsByWorktree: {
             ...state.unifiedTabsByWorktree,
             [sourceId]: state.unifiedTabsByWorktree[sourceId].filter((item) => item.id !== tabId),
-            [destinationId]: [{ ...tab, worktreeId: destinationId, groupId: targetGroup.id }]
+            [destinationId]: destinationTabs
           },
           retainedAgentsByPaneKey: Object.fromEntries(
             Object.entries(state.retainedAgentsByPaneKey).map(([key, retained]) => [
@@ -125,7 +159,12 @@ export function createTabsWorkspaceTransferActions(
                   [sourceId]: state.pendingReconnectTabByWorktree[sourceId].filter(
                     (id) => id !== terminal.id
                   ),
-                  [destinationId]: [terminal.id]
+                  [destinationId]: [
+                    ...new Set([
+                      ...(state.pendingReconnectTabByWorktree[destinationId] ?? []),
+                      terminal.id
+                    ])
+                  ]
                 }
               : {})
           },
@@ -134,9 +173,19 @@ export function createTabsWorkspaceTransferActions(
             [sourceId]: removeSourceGroup
               ? nextSourceGroups.filter((group) => group.id !== sourceGroup.id)
               : nextSourceGroups,
-            [destinationId]: [
-              { ...targetGroup, activeTabId: tabId, tabOrder: [tabId], recentTabIds: [tabId] }
-            ]
+            [destinationId]: state.groupsByWorktree[destinationId].map((group) =>
+              group.id === targetGroup.id
+                ? {
+                    ...targetGroup,
+                    activeTabId: tabId,
+                    tabOrder: targetOrder,
+                    recentTabIds: [
+                      tabId,
+                      ...(targetGroup.recentTabIds ?? []).filter((id) => id !== tabId)
+                    ]
+                  }
+                : group
+            )
           },
           activeGroupIdByWorktree: {
             ...collapsed.activeGroupIdByWorktree,
@@ -156,7 +205,12 @@ export function createTabsWorkspaceTransferActions(
             [sourceId]: (state.tabBarOrderByWorktree[sourceId] ?? []).filter(
               (id) => id !== terminal.id
             ),
-            [destinationId]: [terminal.id]
+            [destinationId]: [
+              ...legacyOrder,
+              ...(state.tabBarOrderByWorktree[destinationId] ?? []).filter(
+                (id) => id !== terminal.id && !legacyOrder.includes(id)
+              )
+            ]
           }
         }
         moved = true

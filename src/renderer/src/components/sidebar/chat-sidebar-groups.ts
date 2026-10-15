@@ -1,11 +1,23 @@
-import type { ChatSidebarRow, ChatSidebarState } from './chat-sidebar-types'
+import {
+  chatHasWorkingTurn,
+  type ChatSidebarRow,
+  type ChatSidebarState
+} from './chat-sidebar-types'
 import { hiddenChatFolderLabels } from './chat-creation-folders'
 import { chatSidebarSplitGroups, type FocusedChatWorkspace } from './chat-sidebar-split-groups'
 import type { WorkspaceSplitGroup } from '@/lib/workspace-split-layout'
 import { chatSidebarPaneGroups, type ChatPaneLayout } from './chat-sidebar-pane-groups'
 
 export type ChatSidebarListItem =
-  | { kind: 'heading'; label: string; id: string; collapsed: boolean }
+  | {
+      kind: 'heading'
+      label: string
+      id: string
+      collapsed: boolean
+      doneFolder?: string
+      workingChatIds?: string[]
+      splitChatIds?: string[]
+    }
   | {
       kind: 'chat'
       row: ChatSidebarRow
@@ -18,7 +30,7 @@ export type ChatSidebarListItem =
       splitEnd?: boolean
     }
 
-/** Activity orders whole workspaces; creation order keeps their main chat stable. */
+/** Activity orders workspaces; resident tab order determines each pane's parent chat. */
 export function chatSidebarListItems(
   rows: readonly ChatSidebarRow[],
   state: Pick<
@@ -38,14 +50,27 @@ export function chatSidebarListItems(
   const matches = (row: ChatSidebarRow) =>
     `${row.title}\n${row.folder}`.toLocaleLowerCase().includes(text)
   const byWorkspace = new Map<string, ChatSidebarRow[]>()
+  const folderCompletion = new Map<string, boolean>()
   for (const row of rows) {
-    if (row.automated || hiddenFolders.includes(row.folder)) {
+    if (!row.automated) {
+      folderCompletion.set(row.folder, (folderCompletion.get(row.folder) ?? true) && row.completed)
+    }
+  }
+  for (const row of rows) {
+    if (
+      row.automated ||
+      hiddenFolders.includes(row.folder) ||
+      (settings?.showOnlyInProgress && row.completed) ||
+      (settings?.showOnlyOpenChats && !row.tabId)
+    ) {
       continue
     }
     const key = JSON.stringify([
       row.hostId,
       row.worktree.id,
       groupBy === 'folder' ? row.folder : null,
+      // Why: opening Done beside active work must not promote it without a new prompt.
+      groupBy === 'status' ? row.completed : null,
       // Why: history belongs in the list, but only resident tabs share a visible workspace.
       row.tabId ? null : row.id
     ])
@@ -99,21 +124,58 @@ export function chatSidebarListItems(
     section.push(group)
     sections.set(key, section)
   }
-  const keys = groupBy === 'status' ? ['In progress', 'Done'] : [...sections.keys()]
+  const visibleFolders = new Set(
+    joined.flatMap((set) => set.groups.flatMap((group) => group.members.map((row) => row.folder)))
+  )
+  const keys =
+    groupBy === 'status'
+      ? ['In progress', 'Done']
+      : groupBy === 'folder'
+        ? [
+            ...new Set([
+              ...sections.keys(),
+              ...[...folderCompletion.keys()].filter(
+                (folder) =>
+                  !hiddenFolders.includes(folder) &&
+                  !visibleFolders.has(folder) &&
+                  (!text || folder.toLocaleLowerCase().includes(text))
+              )
+            ])
+          ]
+        : [...sections.keys()]
   return keys.flatMap((key): ChatSidebarListItem[] => {
-    const section = sections.get(key)
-    if (!section?.length) {
+    const section = sections.get(key) ?? []
+    if (!section.length && (groupBy !== 'folder' || !folderCompletion.has(key))) {
       return []
     }
     const headingId = `chat:${groupBy}:${key}`
-    const collapsed = collapsedGroups?.has(headingId) ?? false
+    const doneFolder =
+      groupBy === 'folder' && settings?.collapseDoneFolders && folderCompletion.get(key)
+        ? key
+        : undefined
+    const sectionRows = section.flatMap((set) => set.groups.flatMap((group) => group.members))
+    const revealEnabled = groupBy === 'folder' && settings?.collapseDoneFolders
+    const workingChatIds = revealEnabled
+      ? sectionRows
+          .filter((row) => row.folder === key && !row.completed && chatHasWorkingTurn(row))
+          .map((row) => row.id)
+      : undefined
+    const splitChatIds =
+      revealEnabled && key === 'Split workspaces' ? sectionRows.map((row) => row.id) : undefined
+    const collapsed =
+      (collapsedGroups?.has(headingId) ?? false) ||
+      (doneFolder !== undefined && !settings?.expandedDoneFolders?.includes(doneFolder))
+    const label = groupBy === 'status' && key === 'In progress' ? 'In Progress' : key
     const items: ChatSidebarListItem[] = key
       ? [
           {
             kind: 'heading',
             id: headingId,
             collapsed,
-            label: `${key} (${section.reduce((sum, set) => sum + set.groups.reduce((count, group) => count + group.members.length, 0), 0)})`
+            doneFolder,
+            workingChatIds,
+            splitChatIds,
+            label: `${label} (${section.reduce((sum, set) => sum + set.groups.reduce((count, group) => count + group.members.length, 0), 0)})`
           }
         ]
       : []

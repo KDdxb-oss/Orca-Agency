@@ -1,3 +1,5 @@
+import { isRemoteExecutionHostPtyId } from '../../../../shared/remote-execution-host-pty-id'
+
 type SnapshotCapability = { id: string; authoritative: boolean | null }
 type SnapshotCapabilityResolver = (ids: string[]) => Promise<SnapshotCapability[]>
 export type SnapshotCapabilityTab = { id: string; ptyId?: string | null }
@@ -23,9 +25,12 @@ const UNKNOWN_CAPABILITY_MAX_ATTEMPTS = 8
 // recovered daemon is consulted again within one slow cycle.
 const SETTLED_UNKNOWN_REASK_MS = 5 * 60_000
 const CAPABILITY_RESOLUTION_TIMEOUT_MS = 1_000
+const MAX_CAPABILITY_PTY_ID_LENGTH = 512
+const IN_FLIGHT_RECHECK_MS = 100
 let lastSynchronizedLivePtyIds: readonly string[] | null = null
 let earliestUnknownCapabilityRetryAtMs = Number.POSITIVE_INFINITY
 let synchronizationGeneration = 0
+let inFlightCapabilityResolutions = 0
 let capabilityRevision = 0
 const capabilityRevisionListeners = new Set<() => void>()
 
@@ -129,15 +134,25 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
     livePtyIds === lastSynchronizedLivePtyIds &&
     earliestUnknownCapabilityRetryAtMs === Number.POSITIVE_INFINITY
   ) {
-    return null
+    return inFlightCapabilityResolutions > 0 ? IN_FLIGHT_RECHECK_MS : null
   }
   const nowMs = observedAtMs ?? Date.now()
   if (livePtyIds === lastSynchronizedLivePtyIds && nowMs < earliestUnknownCapabilityRetryAtMs) {
-    return unknownCapabilityRetryDelayMs(nowMs)
+    const retryDelayMs = unknownCapabilityRetryDelayMs(nowMs)
+    return inFlightCapabilityResolutions > 0 && retryDelayMs !== null
+      ? Math.min(IN_FLIGHT_RECHECK_MS, retryDelayMs)
+      : retryDelayMs
   }
   const generation = ++synchronizationGeneration
   lastSynchronizedLivePtyIds = livePtyIds
-  const live = new Set(livePtyIds.filter((id) => id.length > 0))
+  const live = new Set(
+    livePtyIds.filter(
+      (id) =>
+        id.length > 0 &&
+        id.length <= MAX_CAPABILITY_PTY_ID_LENGTH &&
+        !isRemoteExecutionHostPtyId(id)
+    )
+  )
   let capabilityChanged = false
   for (const cachedId of authoritativeSnapshotByPtyId.keys()) {
     if (!live.has(cachedId)) {
@@ -172,7 +187,12 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
     const batch = missing.slice(offset, offset + 512)
     let resolved: SnapshotCapability[] | null
     try {
-      resolved = await resolveSnapshotCapabilityBatch(resolve, batch)
+      inFlightCapabilityResolutions += 1
+      try {
+        resolved = await resolveSnapshotCapabilityBatch(resolve, batch)
+      } finally {
+        inFlightCapabilityResolutions -= 1
+      }
     } catch {
       if (generation !== synchronizationGeneration) {
         // Why 0, not null: null ends a caller's timer chain, but the winning
@@ -208,13 +228,14 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
     const resolvedById = new Map(resolved.map((entry) => [entry.id, entry.authoritative]))
     for (const id of batch) {
       const authoritative = resolvedById.get(id)
-      if (typeof authoritative === 'boolean') {
-        capabilityChanged ||=
-          (authoritativeSnapshotByPtyId.get(id) === true) !== (authoritative === true)
-        authoritativeSnapshotByPtyId.set(id, authoritative)
+      if (authoritative === true) {
+        capabilityChanged ||= authoritativeSnapshotByPtyId.get(id) !== true
+        authoritativeSnapshotByPtyId.set(id, true)
         unknownCapabilityRetryAtByPtyId.delete(id)
         unknownCapabilityAttemptsByPtyId.delete(id)
       } else {
+        // A daemon can know the provider before it tracks a newly spawned session.
+        // Keep false safe-side, but re-ask in case that session becomes snapshot-backed.
         backOffUnknownCapability(id, nowMs)
       }
     }

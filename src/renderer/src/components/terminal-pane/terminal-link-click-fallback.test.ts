@@ -96,6 +96,10 @@ describe('createFilePathLinkProvider range bounds', () => {
       forceContentReload: true
     })
   })
+  it('waits for context verification before opening a relative path on direct click', () => {
+    expect(clickRelative([`Wrote ${inferredPath}`], new Map())).toBe(false)
+    expect(openFileMock).not.toHaveBeenCalled()
+  })
 
   it('does not choose between two verified relative targets', () => {
     const other = `/other-app/${relativeFile}`
@@ -155,14 +159,21 @@ describe('createFilePathLinkProvider range bounds', () => {
 
   it('keeps a known workspace root above an inferred relative file', async () => {
     setPlatform('Macintosh')
-    storeState.worktreesByRepo = { repo: [{ id: 'wt-root', path: directPath }] }
+    storeState.worktreesByRepo = {
+      repo: [
+        { id: 'wt-1', path: '/workspace/client' },
+        { id: 'wt-root', path: directPath }
+      ]
+    }
     const cache = recentlyProbed([
       [`active\0${directPath}`, false],
       [`active\0${inferredPath}`, true]
     ])
     expect(clickRelative([`Wrote ${inferredPath}`], cache)).toBe(true)
     await flushAsyncWork()
-    expect(activateAndRevealWorktree).toHaveBeenCalledWith('wt-root')
+    expect(activateAndRevealWorktree).toHaveBeenCalledWith('wt-root', {
+      executionHostId: 'local'
+    })
     expect(openFileMock).not.toHaveBeenCalled()
   })
 
@@ -218,7 +229,9 @@ describe('createFilePathLinkProvider range bounds', () => {
 
     expect(opened).toBe(true)
     expect(statMock).toHaveBeenCalledWith({
-      filePath: '\\\\wsl.localhost\\Ubuntu\\root\\workspace\\myrepo\\README.md'
+      filePath: '\\\\wsl.localhost\\Ubuntu\\root\\workspace\\myrepo\\README.md',
+      connectionId: undefined,
+      access: { kind: 'user-file' }
     })
     expect(openFileMock).toHaveBeenCalledWith(
       expect.objectContaining({

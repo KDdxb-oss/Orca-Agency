@@ -114,6 +114,7 @@ function readPositiveInt(name: string, fallback: number): number {
 
 const LOAD_WORKSPACES = readPositiveInt('ORCA_TYPING_BENCH_LOAD_WORKSPACES', 1)
 const LOAD_PANES = readPositiveInt('ORCA_TYPING_BENCH_LOAD_PANES', 4)
+const VISIBLE_PANES = readPositiveInt('ORCA_TYPING_BENCH_VISIBLE_PANES', 2)
 const LOAD_RATE_KBPS = readPositiveInt('ORCA_TYPING_BENCH_RATE_KBPS', 256)
 const KEY_COUNT = readPositiveInt('ORCA_TYPING_BENCH_KEYS', 32)
 const KEY_CADENCE_MS = readPositiveInt('ORCA_TYPING_BENCH_KEY_CADENCE_MS', 250)
@@ -269,6 +270,7 @@ function writeBenchReport(
     },
     config: {
       loadPanes: LOAD_PANES,
+      visiblePanes: VISIBLE_PANES,
       loadWorkspaces: LOAD_WORKSPACES,
       visitedWorkspaces: readPositiveInt('ORCA_TYPING_BENCH_VISITED_WORKSPACES', LOAD_WORKSPACES),
       loadRateKbps: LOAD_RATE_KBPS,
@@ -694,7 +696,7 @@ test.describe('Multi-workspace sustained typing latency bench', () => {
     try {
       // Pane 0 types; the rest replay the agent stream side by side — the
       // "Claude Code running in a visible split" shape.
-      panes = await ensureActiveWorktreePaneLoad(orcaPage, 2)
+      panes = await ensureActiveWorktreePaneLoad(orcaPage, VISIBLE_PANES)
       const [typingPane, ...loadPanes] = panes
       await startSustainedLoadInPanes(orcaPage, loadPanes, loadPath, runId, testRepoPath)
       await focusPane(orcaPage, typingPane.paneKey)

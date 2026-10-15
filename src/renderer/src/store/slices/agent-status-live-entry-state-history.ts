@@ -10,7 +10,7 @@ import type { AgentStatusPayload } from './agent-status-contract'
  *  state switch moves the previous state into history; a session boundary is never recorded. */
 export function resolveAgentStatusLiveEntryStateHistory(
   existing: AgentStatusEntry | undefined,
-  payload: Pick<AgentStatusPayload, 'state' | 'sessionBoundary'>,
+  payload: Pick<AgentStatusPayload, 'state' | 'sessionBoundary' | 'restoredUnconfirmed'>,
   updatedAt: number
 ): {
   history: AgentStateHistoryEntry[]
@@ -24,12 +24,11 @@ export function resolveAgentStatusLiveEntryStateHistory(
     existing.sessionBoundary !== true &&
     payload.state === 'done' &&
     payload.sessionBoundary === true
-  const switchesState = existing?.state !== payload.state || boundaryLandsOnRealDone
-  if (
-    existing &&
-    switchesState &&
-    !(existing.state === 'done' && existing.sessionBoundary === true)
-  ) {
+  const restoredStateConfirmed =
+    existing?.restoredUnconfirmed === true && payload.restoredUnconfirmed !== true
+  const switchesState =
+    existing?.state !== payload.state || boundaryLandsOnRealDone || restoredStateConfirmed
+  if (existing && switchesState && !existing.sessionBoundary && !existing.restoredUnconfirmed) {
     history = [
       ...history,
       {

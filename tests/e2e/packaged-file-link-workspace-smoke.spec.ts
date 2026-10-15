@@ -6,6 +6,8 @@ import { getE2ECompletedOnboardingProfile } from './helpers/e2e-completed-onboar
 import { createElectronHomeIsolation } from './helpers/electron-home-isolation'
 import { cleanupE2EDaemons, closeElectronAppForE2E } from './helpers/electron-process-shutdown'
 import { assertPackagedExecutableIdentity } from './helpers/packaged-executable-identity'
+import { retryTransientMainEvaluate } from './helpers/electron-main-evaluate-retry'
+import { captureHiddenRendererScreenshot } from './helpers/hidden-renderer-screenshot'
 
 async function clickPrintedFileLink(
   page: Page,
@@ -55,7 +57,7 @@ async function clickPrintedFileLink(
     JSON.stringify({ frame, screen, point, visibleCells }, null, 2)
   )
   // Why: hidden Electron windows can defer painting; capture a frame before hit testing.
-  await page.screenshot({ path: test.info().outputPath('link-probe.png') })
+  await captureHiddenRendererScreenshot(page, test.info().outputPath('link-probe.png'))
   await page.mouse.move(point.x, point.y)
   await expect(
     page.locator('.pane-link-tooltip:visible').filter({ hasText: 'linked.md' })
@@ -102,11 +104,13 @@ test('packaged file links and folder workspace splits retain their workspace', a
   try {
     await assertPackagedExecutableIdentity(app, executablePath)
     const page = await app.firstWindow()
-    await app.evaluate(({ BrowserWindow }) => {
-      for (const window of BrowserWindow.getAllWindows()) {
-        window.webContents.setBackgroundThrottling(false)
-      }
-    })
+    await retryTransientMainEvaluate(() =>
+      app.evaluate(({ BrowserWindow }) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.webContents.setBackgroundThrottling(false)
+        }
+      })
+    )
     await page.waitForFunction(() => Boolean(window.api))
     expect(await page.evaluate(() => Boolean(window.__store))).toBe(false)
     const errors: string[] = []
@@ -189,7 +193,10 @@ test('packaged file links and folder workspace splits retain their workspace', a
       page.getByText('Relative file from the same chat', { exact: false }).first()
     ).toBeVisible()
     await expect(row(ids[0])).toHaveAttribute('aria-current', 'page')
-    await page.screenshot({ path: testInfo.outputPath('relative-file-in-owning-chat.png') })
+    await captureHiddenRendererScreenshot(
+      page,
+      testInfo.outputPath('relative-file-in-owning-chat.png')
+    )
 
     await row(ids[1]).locator('[data-worktree-card-surface]').click()
     await expect(row(ids[1])).toHaveAttribute('aria-current', 'page')
@@ -205,7 +212,10 @@ test('packaged file links and folder workspace splits retain their workspace', a
     await clickPrintedFileLink(page, './linked.md', `folder:${ids[1]}`)
     await expect(page.locator('.editor-header-path').first()).toContainText('linked.md')
     await expect(row(ids[1])).toHaveAttribute('aria-current', 'page')
-    await page.screenshot({ path: testInfo.outputPath('file-in-current-workspace.png') })
+    await captureHiddenRendererScreenshot(
+      page,
+      testInfo.outputPath('file-in-current-workspace.png')
+    )
 
     const surface = (id: string) => page.locator(`[data-workspace-surface-id="folder:${id}"]`)
     await row(ids[0]).locator('[data-worktree-card-surface]').click()
@@ -237,8 +247,9 @@ test('packaged file links and folder workspace splits retain their workspace', a
     await expect(page.locator('[data-workspace-split="true"]')).toBeVisible()
     await expect(surface(ids[0])).toBeVisible()
     await expect(surface(ids[1])).toBeVisible()
-    await page.screenshot({ path: testInfo.outputPath('folder-workspace-split.png') })
-    await surface(ids[1]).locator('[data-workspace-unsplit-button]').click()
+    await captureHiddenRendererScreenshot(page, testInfo.outputPath('folder-workspace-split.png'))
+    await row(ids[1]).locator('[data-worktree-card-surface]').click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Unsplit workspace' }).click()
     await expect(page.locator('[data-workspace-split="true"]')).toHaveCount(0)
     await expect(row(ids[0])).toHaveAttribute('aria-current', 'page')
     expect(errors).toEqual([])

@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { extractTerminalFileLinks } from '@/lib/terminal-links'
 import { makeBufferLine } from './terminal-link-provider-buffer-fixtures'
-import { contextualFileLinkTargets } from './terminal-relative-file-link-context'
+import {
+  collectPriorTerminalFileLinkAnchors,
+  contextualFileLinkTargets,
+  resolveExistingTerminalFileLinkPath
+} from './terminal-relative-file-link-context'
+
+vi.mock('./terminal-worktree-path-link', () => ({ resolveKnownWorktreeRootPathLink: () => null }))
 
 function bufferFor(
   rows: ReturnType<typeof makeBufferLine>[]
@@ -93,5 +100,38 @@ describe('terminal relative file context', () => {
     expect(
       targets(['Wrote /app-code/.github/workflows/build.yml'], '.github/workflows/build.yml')
     ).toEqual(['/app-code/.github/workflows/build.yml'])
+  })
+  it('bounds the number of earlier paths retained for a hover', () => {
+    const rows = Array.from({ length: 30 }, (_value, index) =>
+      makeBufferLine(`/workspace/docs/file-${index}.md`)
+    )
+    rows.push(makeBufferLine('docs/target.md'))
+    expect(
+      collectPriorTerminalFileLinkAnchors(bufferFor(rows), rows.length, '/workspace')
+    ).toHaveLength(24)
+  })
+  it('never probes a network-share path inferred from earlier output', async () => {
+    const relativePath = 'docs/agent/linked.md'
+    const parsed = extractTerminalFileLinks(relativePath)[0]
+    if (!parsed) {
+      throw new Error('expected a parsed relative file link')
+    }
+    const pathExists = vi.fn(async (_context: unknown, _path: string, _remote: boolean) => false)
+    const rows = [makeBufferLine(relativePath)]
+    const result = await resolveExistingTerminalFileLinkPath({
+      parsed,
+      buffer: bufferFor(rows),
+      bufferLineNumber: 1,
+      cwd: '/workspace/client',
+      worktreePath: '/workspace/client',
+      runtimeEnvironmentId: null,
+      fileContext: { settings: null, worktreeId: 'wt-1', worktreePath: '/workspace/client' },
+      pathExistsCache: new Map(),
+      pathExists,
+      getPriorAnchors: () => [String.raw`\\evil.example\share\docs\agent\linked.md`]
+    })
+    expect(result).toBeNull()
+    expect(pathExists).toHaveBeenCalledTimes(1)
+    expect(pathExists.mock.calls[0][1]).toBe('/workspace/client/docs/agent/linked.md')
   })
 })

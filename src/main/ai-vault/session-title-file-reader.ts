@@ -25,7 +25,8 @@ async function readOneTitle(
   }
   const transcriptPath = request.transcriptPath?.trim()
   if (!transcriptPath) {
-    return cache?.get(request) ?? null
+    const cached = cache?.get(request)
+    return cached ? { agent: cached.agent, sessionId: cached.sessionId, title: cached.title } : null
   }
   try {
     const stats = await wslGatedLstat(transcriptPath, 'scan', signal)
@@ -60,7 +61,8 @@ async function readOneTitle(
     const title = {
       agent: request.agent,
       sessionId: request.sessionId,
-      title: session.title.trim()
+      title: session.title.trim(),
+      ...(request.agent === 'claude' ? { isHeadless: session.isHeadless === true } : {})
     }
     cache?.set(title)
     return title

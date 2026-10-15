@@ -66,7 +66,11 @@ export function processTerminalTailCompleteSegments(segments: string[]): string[
   const processed: string[] = []
   let totalChars = 0
   for (let index = segments.length - 1; index >= 0; index -= 1) {
-    const line = applyTerminalLineControls(segments[index]!).text
+    // A trailing CR before LF ends the line; do not treat it as an empty redraw.
+    const segment = segments[index]!
+    const line = applyTerminalLineControls(
+      segment.endsWith('\r') ? segment.slice(0, -1) : segment
+    ).text
     processed.push(line)
     totalChars += line.length
     if (totalChars > MAX_TAIL_CHARS) {

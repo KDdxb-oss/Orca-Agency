@@ -12,6 +12,7 @@ import {
   abortRebaseMock,
   stageFileMock,
   bulkStageFilesMock,
+  stageWorktreeChangesMock,
   bulkUnstageFilesMock,
   bulkDiscardChangesMock,
   discardChangesMock,
@@ -81,6 +82,45 @@ describe('registerFilesystemHandlers', () => {
     // Reset module-level auth cache so each test starts with a fresh dirty
     // flag — prevents stale worktree data from a prior test's cache rebuild.
     invalidateAuthorizedRootsCache()
+  })
+
+  it('does not execute Git status for a registered folder project', async () => {
+    const repos = vi
+      .spyOn(store, 'getRepos')
+      .mockReturnValue(store.getRepos().map((repo) => ({ ...repo, kind: 'folder' })))
+    try {
+      invalidateAuthorizedRootsCache()
+      registerFilesystemHandlers(store as never)
+      const status = await handlers.get('git:status')!(null, { worktreePath: REPO_PATH })
+      expect(status).toEqual({ entries: [], conflictOperation: 'unknown' })
+      expect(getStatusMock).not.toHaveBeenCalled()
+      expect(listWorktreesMock).not.toHaveBeenCalled()
+    } finally {
+      repos.mockRestore()
+      invalidateAuthorizedRootsCache()
+    }
+  })
+
+  it('does not ask the SSH provider for Git status of a registered folder project', async () => {
+    const repos = vi
+      .spyOn(store, 'getRepos')
+      .mockReturnValue(
+        store.getRepos().map((repo) => ({ ...repo, kind: 'folder', connectionId: 'ssh-folder' }))
+      )
+    try {
+      registerFilesystemHandlers(store as never)
+      expect(
+        await handlers.get('git:status')!(null, {
+          worktreePath: REPO_PATH,
+          connectionId: 'ssh-folder'
+        })
+      ).toEqual({ entries: [], conflictOperation: 'unknown' })
+      expect(getSshGitProviderMock).not.toHaveBeenCalled()
+      expect(getStatusMock).not.toHaveBeenCalled()
+      expect(listWorktreesMock).not.toHaveBeenCalled()
+    } finally {
+      repos.mockRestore()
+    }
   })
 
   it('normalizes repo worktree paths and keeps git file paths relative', async () => {
@@ -472,6 +512,47 @@ describe('registerFilesystemHandlers', () => {
       [path.join('src', 'file.ts'), path.join('nested', 'child.ts')],
       { admissionTier: 'interactive' }
     )
+  })
+
+  it('stages the whole worktree when bulk stage carries a scope', async () => {
+    stageWorktreeChangesMock.mockResolvedValue(undefined)
+
+    registerFilesystemHandlers(store as never)
+
+    await handlers.get('git:bulkStage')!(null, {
+      worktreePath: WORKTREE_FEATURE_PATH,
+      filePaths: ['src/file.ts'],
+      scope: 'all'
+    })
+
+    expect(stageWorktreeChangesMock).toHaveBeenCalledWith(WORKTREE_FEATURE_PATH, 'all', {
+      admissionTier: 'interactive',
+      sharedLinkPaths: []
+    })
+    expect(bulkStageFilesMock).not.toHaveBeenCalled()
+  })
+
+  it('passes configured shared links to whole-worktree staging', async () => {
+    const sharedStore = {
+      ...store,
+      getRepos: () => [{ ...store.getRepos()[0], symlinkPaths: ['node_modules'] }],
+      getAllWorktreeMeta: () => ({ [`repo-1::${WORKTREE_FEATURE_PATH}`]: {} })
+    }
+    registerWorktreeRootsForRepo(sharedStore as never, 'repo-1', [REPO_PATH, WORKTREE_FEATURE_PATH])
+    stageWorktreeChangesMock.mockResolvedValue({ stagedScope: 'all' })
+
+    registerFilesystemHandlers(sharedStore as never)
+
+    await handlers.get('git:bulkStage')!(null, {
+      worktreePath: WORKTREE_FEATURE_PATH,
+      filePaths: [],
+      scope: 'all'
+    })
+
+    expect(stageWorktreeChangesMock).toHaveBeenCalledWith(WORKTREE_FEATURE_PATH, 'all', {
+      admissionTier: 'interactive',
+      sharedLinkPaths: ['node_modules']
+    })
   })
 
   it('normalizes git file paths for bulk discard requests', async () => {

@@ -18,15 +18,12 @@ import {
   getFolderWorkspacePathStatusTitle
 } from './folder-workspace-path-status'
 import { toast } from 'sonner'
-import { isDetachedHeadWorkspace } from '@/components/sidebar/visible-worktrees'
-import { revealRepoInProjectFilter } from '@/components/sidebar/project-filter-reveal'
 import type { ExecutionHostId } from '../../../shared/execution-host'
 import { findFolderWorkspaceOwner } from './folder-workspace-runtime-owner'
 import type { WorktreeStartupPayload } from '@/lib/worktree-startup-payload'
 import { ensureWorktreeHasInitialTerminal } from '@/lib/worktree-initial-terminal-seeding'
 import { ensureWebRuntimeWorktreeTerminalAfterWake } from '@/lib/web-runtime-worktree-terminal-after-wake'
 import { applyWorktreeNavViewEntry } from '@/lib/worktree-nav-view-history-replay'
-import { findWorktreeClaimedByNoHost } from '@/lib/worktree-host-qualified-lookup'
 import {
   activationProvidesInitialSurface,
   activationSeedsUserDefaultSurface,
@@ -34,6 +31,9 @@ import {
   type WorktreeActivationSurfaceSelection
 } from './worktree-activation-surface-selection'
 import { gateAndReseedEmptyWorkspace } from './worktree-activation-gated-empty-reseed'
+import { liftSidebarFiltersHidingWorktree } from './worktree-activation-sidebar-filters'
+import { isFloatingWorkspaceId } from '../../../shared/floating-workspace-worktree'
+import { revealFloatingWorkspacePanel } from './floating-workspace-panel-reveal'
 
 /**
  * Shared activation sequence used by the worktree palette and add-repo/worktree dialogs.
@@ -57,7 +57,7 @@ function ensureFolderWorkspaceInitialTerminal(
   }
   const state = useAppStore.getState()
   const workspaceKey = folderWorkspaceKey(folderWorkspace.id)
-  return ensureWorktreeHasInitialTerminal(
+  const primaryTabId = ensureWorktreeHasInitialTerminal(
     state,
     workspaceKey,
     startup,
@@ -69,6 +69,7 @@ function ensureFolderWorkspaceInitialTerminal(
       ...(seedUserDefaultSurface ? { seedUserDefaultSurface: true } : {})
     }
   )
+  return primaryTabId
 }
 
 function canInspectAgentActivationInventory(): boolean {
@@ -84,6 +85,7 @@ export function activateAndRevealFolderWorkspace(
   opts?: WorktreeActivationSurfaceSelection & {
     sidebarRevealBehavior?: PendingSidebarWorktreeReveal['behavior']
     revealInSidebar?: boolean
+    showWorkspaceList?: boolean
     startup?: WorktreeStartupPayload
     runtimeEnvironmentId?: string | null
     executionHostId?: ExecutionHostId
@@ -165,6 +167,9 @@ export function activateAndRevealFolderWorkspace(
         seedUserDefaultSurface
       )
 
+  if (opts?.showWorkspaceList) {
+    state.setSidebarBody('workspaces')
+  }
   if (opts?.revealInSidebar !== false) {
     state.revealWorktreeInSidebar(
       workspaceKey,
@@ -188,12 +193,12 @@ export function activateAndRevealWorktree(
   opts?: WorktreeActivationOptions
 ): ActivateAndRevealResult | false {
   const state = useAppStore.getState()
-  // Why the second lookup: `executionHostId` can come from a live pty, which outranks the
-  // workspace catalog, and a row that never got a host stamp files under `local` — refusing
-  // there would strand a remote session. See worktree-host-qualified-lookup.
-  const wt =
-    state.getKnownWorktreeById(worktreeId, opts?.executionHostId) ??
-    (opts?.executionHostId ? findWorktreeClaimedByNoHost(state, worktreeId) : undefined)
+  // The floating workspace owns a separate panel, never the main window's selection.
+  if (isFloatingWorkspaceId(worktreeId)) {
+    revealFloatingWorkspacePanel(state)
+    return { primaryTabId: null }
+  }
+  const wt = state.getKnownWorktreeById(worktreeId, opts?.executionHostId)
   if (!wt) {
     return false
   }
@@ -291,21 +296,12 @@ export function activateAndRevealWorktree(
     useAppStore.getState().queueTabInitialCwd(primaryTabId, opts.initialCwd)
   }
 
-  // 5. Lift the sidebar filters hiding the target — reveal needs the card rendered, else it silently no-ops.
+  // 5. Explicit list requests leave the activity view only now that activation has committed.
+  if (opts?.showWorkspaceList) {
+    state.setSidebarBody('workspaces')
+  }
   if (opts?.clearSidebarFilters !== false) {
-    revealRepoInProjectFilter(state, wt.repoId)
-    if (
-      state.hideAutomationGeneratedWorkspaces &&
-      wt.automationProvenance?.kind === 'created-by-automation'
-    ) {
-      state.setHideAutomationGeneratedWorkspaces(false)
-    }
-    if (state.hideCliCreatedWorkspaces && wt.cliProvenance?.kind === 'created-by-cli') {
-      state.setHideCliCreatedWorkspaces(false)
-    }
-    if (state.hideDetachedHeadWorkspaces && isDetachedHeadWorkspace(wt)) {
-      state.setHideDetachedHeadWorkspaces(false)
-    }
+    liftSidebarFiltersHidingWorktree(wt)
   }
 
   // 6. Reveal in sidebar
@@ -345,6 +341,7 @@ export function activateAndRevealWorkspace(
   opts?: WorktreeActivationSurfaceSelection & {
     executionHostId?: ExecutionHostId
     revealInSidebar?: boolean
+    showWorkspaceList?: boolean
     /** Worktree-only: folder workspaces are never filter-hidden. */
     clearSidebarFilters?: boolean
   }

@@ -141,9 +141,39 @@ describe('resolveProtectedMultilinePasteOptionsForPane', () => {
   })
 
   it('uses modified Enter for an agent that reads Windows input records', () => {
-    expect(decide({ hostPlatform: 'win32' })).toEqual({
+    expect(
+      decide({
+        hostPlatform: 'win32',
+        paneForegroundAgentByPaneKey: {
+          [AGENT_PANE_KEY]: foregroundEntry({
+            agent: 'codex',
+            agentEvidence: 'process-read',
+            routingTrusted: true
+          })
+        }
+      })
+    ).toEqual({
       windowsInputRecordNewline: 'alt-enter'
     })
+  })
+
+  it('does not send modified Enter to a shell based on a stale Codex status row', () => {
+    expect(decide({ hostPlatform: 'win32' })).toEqual({
+      forceBracketedPasteForMultiline: true
+    })
+    expect(
+      decide({
+        hostPlatform: 'win32',
+        paneForegroundAgentByPaneKey: {
+          [AGENT_PANE_KEY]: foregroundEntry({
+          agent: 'codex',
+          agentEvidence: 'process-read',
+          routingTrusted: true,
+          routingRevoked: true
+          })
+        }
+      })
+    ).toEqual({ forceBracketedPasteForMultiline: true })
   })
 
   it('does not change unverified Windows agent paste protocols', () => {
@@ -190,7 +220,16 @@ describe('leading-newline paste into a remote agent pane', () => {
       source: 'keyboard',
       target: remoteWindowsTarget(),
       terminalBracketedPasteMode: false,
-      ...decide({ hostPlatform: 'win32' })
+      ...decide({
+        hostPlatform: 'win32',
+        paneForegroundAgentByPaneKey: {
+          [AGENT_PANE_KEY]: foregroundEntry({
+            agent: 'codex',
+            agentEvidence: 'process-read',
+            routingTrusted: true
+          })
+        }
+      })
     })
     await executeTerminalPastePlan(plan, {
       pasteText: (text, options) => pasteTerminalText(terminal, text, options)
@@ -209,7 +248,16 @@ describe('leading-newline paste into a remote agent pane', () => {
       source: 'keyboard',
       target: remoteWindowsTarget(),
       terminalBracketedPasteMode: false,
-      ...decide({ hostPlatform: 'win32' })
+      ...decide({
+        hostPlatform: 'win32',
+        paneForegroundAgentByPaneKey: {
+          [AGENT_PANE_KEY]: foregroundEntry({
+            agent: 'codex',
+            agentEvidence: 'process-read',
+            routingTrusted: true
+          })
+        }
+      })
     })
 
     expect(plan.mode).toBe('direct')

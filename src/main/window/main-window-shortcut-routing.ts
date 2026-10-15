@@ -21,6 +21,7 @@ import type { CreateMainWindowOptions } from './main-window-contracts'
 import type { MainWindowFocusLifecycle } from './main-window-focus-lifecycle'
 import { sendResolvedWindowShortcutAction } from './main-window-shortcut-actions'
 import { isMacAppPasteInput } from './main-window-visual-lifecycle'
+import { installMainWindowMouseHistory } from './main-window-mouse-history'
 
 export function installMainWindowShortcutRouting(args: {
   focus: MainWindowFocusLifecycle
@@ -29,6 +30,7 @@ export function installMainWindowShortcutRouting(args: {
   store: Store | null
 }): void {
   const { focus, mainWindow, opts, store } = args
+  installMainWindowMouseHistory(mainWindow)
   const doubleTapDetector = new ModifierDoubleTapDetector()
 
   const dispatchResolvedWindowShortcutAction = (

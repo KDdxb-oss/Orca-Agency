@@ -44,6 +44,32 @@ const chats = (source: ReturnType<typeof state>, values = rows) =>
   chatSidebarListItems(values, source, '').filter((item) => item.kind === 'chat')
 
 describe('chat connectors follow pane layout', () => {
+  it('changes the parent immediately when tabs are reordered, including after restoring layout', () => {
+    const source = state()
+    const owner = source.groupsByWorktree[worktreeId][0]
+    const values = rows.map((row) => ({ ...row, ownsWorkspaceName: row.id === 'a' }))
+    expect(chats(source, values).map((row) => [row.id, row.subTab])).toEqual([
+      ['a', false],
+      ['b', true],
+      ['c', true]
+    ])
+    owner.tabOrder = ['unified-b', 'unified-a', 'unified-c']
+    expect(chats(source, values).map((row) => [row.id, row.subTab])).toEqual([
+      ['b', false],
+      ['a', true],
+      ['c', true]
+    ])
+    const restored = {
+      ...source,
+      groupsByWorktree: JSON.parse(JSON.stringify(source.groupsByWorktree))
+    }
+    expect(chats(restored, values).map((row) => [row.id, row.subTab])).toEqual([
+      ['b', false],
+      ['a', true],
+      ['c', true]
+    ])
+  })
+
   it('switches from elbows to brackets on split and back when tabs rejoin', () => {
     const source = state()
     expect(chats(source).map((r) => [r.subTab, Boolean(r.splitId)])).toEqual([

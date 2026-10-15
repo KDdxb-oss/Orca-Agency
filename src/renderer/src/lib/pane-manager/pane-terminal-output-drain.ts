@@ -33,20 +33,28 @@ function hasDrainableBacklog(): boolean {
 
 // Why no per-write scroll enforcement: xterm's BufferService.isUserScrolling owns live follow/pin; app-side enforcement is limited to structural ops xterm can't identify, like replay.
 
-function takeNextDrainableEntry(): QueueEntry | null {
+function takeNextDrainableEntry(preferInteractive: boolean): QueueEntry | null {
+  let foregroundEntry: QueueEntry | null = null
   let largeBacklogEntry: QueueEntry | null = null
   for (const entry of queuedByTerminal.values()) {
     if (!isEntryDrainable(entry)) {
       continue
     }
-    // Why: active/foreground output should be chosen first, not left in insertion order behind older background terminals.
-    if (entry.highPriority) {
+    // Why: give echo one leading slice, then rotate visible panes so a continuous echo stream cannot monopolize a drain.
+    if (preferInteractive && entry.interactiveCharsRemaining > 0) {
       queuedByTerminal.delete(entry.terminal)
       return entry
+    }
+    if (!foregroundEntry && entry.highPriority) {
+      foregroundEntry = entry
     }
     if (!largeBacklogEntry && entry.queuedChars > LARGE_BACKLOG_CHARS) {
       largeBacklogEntry = entry
     }
+  }
+  if (foregroundEntry) {
+    queuedByTerminal.delete(foregroundEntry.terminal)
+    return foregroundEntry
   }
   if (largeBacklogEntry) {
     queuedByTerminal.delete(largeBacklogEntry.terminal)
@@ -80,7 +88,7 @@ export function drainQueuedOutputImpl(): void {
   const maxWrites = highPriority ? HIGH_PRIORITY_MAX_WRITES_PER_DRAIN : MAX_WRITES_PER_DRAIN
 
   while (queuedByTerminal.size > 0 && writes < maxWrites) {
-    const entry = takeNextDrainableEntry()
+    const entry = takeNextDrainableEntry(writes === 0)
     if (!entry) {
       break
     }
@@ -100,6 +108,7 @@ export function drainQueuedOutputImpl(): void {
       queuedByTerminal.set(entry.terminal, entry)
     } else {
       entry.highPriority = false
+      entry.interactiveCharsRemaining = 0
       clearForegroundRelease(entry)
     }
     // Why: xterm parsing and DOM work share the renderer thread with input; keep draining cooperative so WSL/agent output can't pin the UI.

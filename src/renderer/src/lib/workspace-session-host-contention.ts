@@ -13,6 +13,7 @@ import {
   type WorkspaceSessionRecord
 } from '../../../shared/workspace-session-host-records'
 import type { WorkspaceRuntimeOwnerProjection } from './workspace-runtime-host-ownership'
+import { WORKSPACE_CHROME_SESSION_FIELDS } from './workspace-session-hydration-keys'
 import {
   mergeWorkspaceSessionsFromHosts,
   type HostSessionSlices
@@ -46,6 +47,11 @@ export type WorktreeHostClaims = ReadonlyMap<string, ReadonlySet<ExecutionHostId
 const WORKTREE_KEYED_FIELDS = (
   Object.keys(WORKSPACE_SESSION_FIELD_OWNERSHIP) as (keyof WorkspaceSessionState)[]
 ).filter((field) => WORKSPACE_SESSION_FIELD_OWNERSHIP[field] === 'worktreeKeyed')
+
+const WORKTREE_CONTENT_FIELDS = [
+  ...WORKSPACE_CHROME_SESSION_FIELDS,
+  'clientHostedBrowserPagesByWorktree'
+] as const satisfies readonly (keyof WorkspaceSessionState)[]
 
 /** Bare worktree id behind a session key. Lives in shared because the partition adoption read needs
  *  the same normalization, and two implementations of it would drift. */
@@ -123,11 +129,12 @@ function definedHostIds(slices: HostSessionSlices): ExecutionHostId[] {
 
 function indexHostIdsBySessionKey(
   slices: HostSessionSlices,
-  hostIds: readonly ExecutionHostId[]
+  hostIds: readonly ExecutionHostId[],
+  fields: readonly (keyof WorkspaceSessionState)[] = WORKTREE_KEYED_FIELDS
 ): Map<string, ExecutionHostId[]> {
   const hostIdsByKey = new Map<string, ExecutionHostId[]>()
   for (const hostId of hostIds) {
-    for (const field of WORKTREE_KEYED_FIELDS) {
+    for (const field of fields) {
       const record = slices[hostId]?.[field]
       if (!isWorkspaceSessionRecord(record)) {
         continue
@@ -194,11 +201,14 @@ export function extractContestedHostSessionEntries(slices: HostSessionSlices): {
   const shadow: HostSessionSlices = {}
   const hostIds = definedHostIds(slices)
   const hostIdsByKey = indexHostIdsBySessionKey(slices, hostIds)
+  const contentHostIdsByKey = indexHostIdsBySessionKey(slices, hostIds, WORKTREE_CONTENT_FIELDS)
+  const primaryHostForKey = (key: string, owners: ExecutionHostId[]): ExecutionHostId =>
+    pickPrimaryHostForClaims(contentHostIdsByKey.get(key) ?? owners)
   const primaryHostBySessionKey: Record<string, ExecutionHostId> = {}
   const contestedSessionKeys = new Set<string>()
   for (const [key, owners] of hostIdsByKey) {
-    primaryHostBySessionKey[key] = pickPrimaryHostForClaims(owners)
-    if (owners.length > 1) {
+    primaryHostBySessionKey[key] = primaryHostForKey(key, owners)
+    if ((contentHostIdsByKey.get(key)?.length ?? 0) > 1) {
       contestedSessionKeys.add(key)
     }
   }
@@ -208,7 +218,7 @@ export function extractContestedHostSessionEntries(slices: HostSessionSlices): {
   const primaryByKey = new Map<string, ExecutionHostId>()
   for (const [key, owners] of hostIdsByKey) {
     if (owners.length > 1) {
-      primaryByKey.set(key, pickPrimaryHostForClaims(owners))
+      primaryByKey.set(key, primaryHostForKey(key, owners))
     }
   }
   if (primaryByKey.size === 0) {

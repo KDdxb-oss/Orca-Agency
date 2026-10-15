@@ -1,7 +1,8 @@
 import type { SpeechModelManifest } from '../../shared/speech-types'
 import { getSpeechModelDownloadMetadata } from './model-download-catalog'
+import { getSupportedSpeechModels } from './speech-platform-support'
 
-export const SPEECH_MODEL_CATALOG: SpeechModelManifest[] = [
+const ALL_SPEECH_MODELS: SpeechModelManifest[] = [
   {
     id: 'parakeet-tdt-0.6b-v3-int8',
     label: 'Parakeet TDT v3',
@@ -146,8 +147,10 @@ export const SPEECH_MODEL_CATALOG: SpeechModelManifest[] = [
   }
 ]
 
+export const SPEECH_MODEL_CATALOG = getSupportedSpeechModels(ALL_SPEECH_MODELS)
+
 export function getCatalogModel(id: string): SpeechModelManifest | undefined {
-  return SPEECH_MODEL_CATALOG.find((m) => m.id === id)
+  return ALL_SPEECH_MODELS.find((m) => m.id === id)
 }
 
 export function isLocalSpeechModel(manifest: SpeechModelManifest): boolean {

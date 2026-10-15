@@ -55,6 +55,7 @@ export function flushTerminalOutputImpl(
     entry.chunkIndex = 0
     entry.queuedChars = 0
     entry.highPriority = false
+    entry.interactiveCharsRemaining = 0
     clearForegroundRelease(entry)
     recordQueueDebugPressure()
     return

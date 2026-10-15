@@ -127,4 +127,23 @@ $script:handles[99] = New-Handle 99
 $timedOut = $false
 try { Wait-ReviewedDesktopClosed $exe 10 $olderCaptured 0 } catch { $timedOut = $_ -like '*did not close*' }
 Assert-Check ($timedOut -and $script:killed.Count -eq 0) 'a previous reporter with a live parent stays protected'
+
+$script:records = @((New-Record 10 1 'Orca.exe'), (New-Record 30 10 '--type=renderer'))
+Wait-ReviewedDesktopExclusiveUse $exe 10 1 0
+Assert-Check $true 'original desktop and direct children pass exclusive-use guard'
+$script:records += New-Record 40 30 'Orca.exe'
+$script:enumerations = 0
+function Get-CimInstance {
+  param($ClassName, $Filter, $ErrorAction)
+  $script:enumerations++
+  if ($script:enumerations -eq 2) { $script:records = @($script:records | Where-Object { $_.ProcessId -ne 40 }) }
+  return $script:records
+}
+Wait-ReviewedDesktopExclusiveUse $exe 10 3 0
+Assert-Check ($script:enumerations -eq 2) 'transient installed helper exits before unchanged exclusive-use guard passes'
+$script:records += New-Record 50 1 'Orca.exe'
+$script:enumerations = 0
+$blocked = $false
+try { Wait-ReviewedDesktopExclusiveUse $exe 10 3 0 } catch { $blocked = $_ -like '*PID=50 parent=1*' }
+Assert-Check ($blocked -and $script:enumerations -eq 3 -and $script:killed.Count -eq 0) 'persistent foreign process aborts with identity and without termination'
 Write-Host "$script:checks checks passed. No real processes were modified."

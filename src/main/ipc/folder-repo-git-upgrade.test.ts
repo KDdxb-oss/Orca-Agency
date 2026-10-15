@@ -22,9 +22,9 @@ vi.mock('../git/repo', async (importOriginal) => {
   const actual = await importOriginal<typeof GitRepo>()
   return {
     ...actual,
-    isGitRepo: (path: string) => {
+    isGitRepoAsync: (path: string) => {
       gitProbes.push(path)
-      return actual.isGitRepo(path)
+      return actual.isGitRepoAsync(path)
     }
   }
 })
@@ -68,6 +68,7 @@ import {
   stopFolderRepoGitUpgradeWatch
 } from './folder-repo-git-upgrade'
 import { wakeFolderRepoGitUpgradeWatch } from './folder-repo-git-upgrade-wake'
+import * as gitRepoModule from '../git/repo'
 
 type TestWindow = {
   destroyed: boolean
@@ -150,9 +151,50 @@ describe('folder repo git upgrade watch', () => {
 
   afterEach(async () => {
     stopFolderRepoGitUpgradeWatch()
+    vi.restoreAllMocks()
     await rm(symlinkedRoot, { force: true })
     await rm(root, { recursive: true, force: true })
   })
+
+  it.each(['removed', 'moved', 'extra workspace', 'disposed'])(
+    'does not apply an asynchronous upgrade after the project is %s',
+    async (change) => {
+      const repoPath = join(root, 'pending-project')
+      await mkdir(repoPath)
+      gitInit(repoPath)
+      const repo = makeRepo({ id: 'pending', path: repoPath })
+      const repos = [repo]
+      const meta: Record<string, unknown> = {}
+      const store = makeStore(repos, meta)
+      let release: (result: boolean) => void = () => {}
+      vi.spyOn(gitRepoModule, 'isGitRepoAsync').mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            release = resolve
+          })
+      )
+      startFolderRepoGitUpgradeWatch(store as never, makeWindow() as never, {
+        pollIntervalMs: POLL_MS
+      })
+      await vi.waitFor(() => expect(gitRepoModule.isGitRepoAsync).toHaveBeenCalledOnce())
+      if (change === 'removed') {
+        repos.splice(0)
+      }
+      if (change === 'moved') {
+        repo.path = join(root, 'moved-project')
+      }
+      if (change === 'extra workspace') {
+        meta[`pending::${repoPath}::workspace:11111111-1111-1111-1111-111111111111`] = {}
+      }
+      if (change === 'disposed') {
+        stopFolderRepoGitUpgradeWatch()
+      }
+      release(true)
+      await tick()
+      expect(store.updateRepo).not.toHaveBeenCalled()
+      expect(notifyReposChanged).not.toHaveBeenCalled()
+    }
+  )
 
   // Real timers: the tick awaits real filesystem stats, which fake timers cannot flush.
   async function tick(times = 1): Promise<void> {
@@ -180,7 +222,7 @@ describe('folder repo git upgrade watch', () => {
     expect(store.updateRepo).not.toHaveBeenCalled()
 
     gitInit(repoPath)
-    await tick()
+    await vi.waitFor(() => expect(store.updateRepo).toHaveBeenCalled())
 
     expect(store.updateRepo).toHaveBeenCalledWith('folder-repo', {
       kind: 'git',
@@ -206,12 +248,16 @@ describe('folder repo git upgrade watch', () => {
       pollIntervalMs: POLL_MS,
       idlePollIntervalMs: IDLE_POLL_MS
     })
-    await tick()
-
-    expect(store.updateRepo).toHaveBeenCalledWith('folder-repo', {
-      kind: 'git',
-      folderUpgradeGitRootPath: join(root, 'symlinked-project').replaceAll('\\', '/')
-    })
+    // A fixed tick wait can finish before the marker stat resolves under load.
+    await vi.waitFor(
+      () => {
+        expect(store.updateRepo).toHaveBeenCalledWith('folder-repo', {
+          kind: 'git',
+          folderUpgradeGitRootPath: join(root, 'symlinked-project').replaceAll('\\', '/')
+        })
+      },
+      { timeout: 5_000, interval: POLL_MS }
+    )
   })
 
   it('retries after the last extra folder workspace is removed', async () => {

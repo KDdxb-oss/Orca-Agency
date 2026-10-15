@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -88,5 +88,36 @@ describe('createElectronHomeIsolation', () => {
 
   it('compares Windows home paths case-insensitively', () => {
     expect(areSameHomePath('C:\\Users\\Alice', 'c:\\users\\alice', 'win32')).toBe(true)
+  })
+
+  it('keeps Windows app data and relocated daemon hosts inside the disposable profile', () => {
+    const userDataDir = createUserDataDir()
+    const isolation = createElectronHomeIsolation({
+      inheritedEnv: {
+        APPDATA: 'C:\\Users\\Alice\\AppData\\Roaming',
+        LOCALAPPDATA: 'C:\\Users\\Alice\\AppData\\Local'
+      },
+      launchEnv: {},
+      extraEnv: {},
+      userDataDir,
+      realHome: 'C:\\Users\\Alice',
+      platform: 'win32'
+    })
+
+    expect(isolation.env.APPDATA).toBe(realpathSync.native(path.join(userDataDir, 'appdata')))
+    expect(isolation.env.LOCALAPPDATA).toBe(
+      realpathSync.native(path.join(userDataDir, 'local-app-data'))
+    )
+    expect(existsSync(path.join(userDataDir, 'local-app-data'))).toBe(true)
+    expect(() =>
+      createElectronHomeIsolation({
+        inheritedEnv: {},
+        launchEnv: { LOCALAPPDATA: 'C:\\unsafe' },
+        extraEnv: {},
+        userDataDir,
+        realHome: 'C:\\Users\\Alice',
+        platform: 'win32'
+      })
+    ).toThrow(/launchEnv\.LOCALAPPDATA/)
   })
 })

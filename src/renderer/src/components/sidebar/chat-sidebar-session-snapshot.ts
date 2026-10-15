@@ -53,6 +53,7 @@ const SNAPSHOT_FIELDS = [
   'createdAt',
   'updatedAt',
   'modifiedAt',
+  'isHeadless',
   'lastHumanTurnAt',
   'resumeCommand'
 ] as const
@@ -72,6 +73,9 @@ export function chatSessionSnapshot(session: AiVaultSession): ChatSidebarSession
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     modifiedAt: session.modifiedAt,
+    ...(session.agent === 'claude' && session.isHeadless !== undefined
+      ? { isHeadless: session.isHeadless }
+      : {}),
     ...(session.lastHumanTurnAt ? { lastHumanTurnAt: session.lastHumanTurnAt } : {}),
     ...(session.executionHostId !== LOCAL_EXECUTION_HOST_ID && session.resumeCommand
       ? { resumeCommand: session.resumeCommand }
@@ -189,6 +193,22 @@ export function freshestChatSnapshot(
   }
   const baseAt = Date.parse(base.updatedAt ?? base.modifiedAt)
   const liveAt = Date.parse(live.updatedAt ?? live.modifiedAt)
+  // Why: the hook's verified transcript path is authoritative even within the activity throttle.
+  const relocated =
+    base.filePath !== live.filePath &&
+    base.executionHostId === live.executionHostId &&
+    base.agent === live.agent &&
+    base.sessionId === live.sessionId
+  if (relocated) {
+    return {
+      ...base,
+      cwd: live.cwd,
+      filePath: live.filePath,
+      title: live.title,
+      updatedAt: liveAt > baseAt ? live.updatedAt : base.updatedAt,
+      modifiedAt: liveAt > baseAt ? live.modifiedAt : base.modifiedAt
+    }
+  }
   return Number.isFinite(baseAt) && liveAt <= baseAt + (throttle ? LIVE_SNAPSHOT_REFRESH_MS : 0)
     ? base
     : { ...base, title: live.title, updatedAt: live.updatedAt, modifiedAt: live.modifiedAt }

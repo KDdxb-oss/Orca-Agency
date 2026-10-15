@@ -1,4 +1,4 @@
-import type { Terminal } from '@xterm/xterm'
+import type { ILink, Terminal } from '@xterm/xterm'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { isTerminalHttpLinkActivation } from '@/components/terminal-pane/terminal-http-link-activation'
 import {
@@ -70,9 +70,24 @@ export function installPreviewTerminalLinks(
     pathExistsCache: new Map(),
     getLinkActionContext: () => null
   }
-  const provider = terminal.registerLinkProvider(
-    createFilePathLinkProvider(0, deps, tooltip, getTerminalFileOpenHint(false))
-  )
+  const fileLinks = createFilePathLinkProvider(0, deps, tooltip, getTerminalFileOpenHint(false))
+  const provider = terminal.registerLinkProvider({
+    provideLinks: (line, callback) =>
+      fileLinks.provideLinks(line, (links) =>
+        callback(
+          context.isCurrent()
+            ? links?.map((link): ILink => ({
+                ...link,
+                activate: (...activation) => {
+                  if (context.isCurrent()) {
+                    link.activate(...activation)
+                  }
+                }
+              }))
+            : []
+        )
+      )
+  })
   const fallback = installFilePathLinkClickFallback(0, terminal, deps)
   const previousHandler = terminal.options.linkHandler
   terminal.options.linkHandler = {

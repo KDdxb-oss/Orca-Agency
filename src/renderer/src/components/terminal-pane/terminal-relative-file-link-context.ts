@@ -8,6 +8,7 @@ import { joinAbsolutePath, normalizeAbsolutePath } from '@/lib/terminal-path-nor
 import { isRemoteRuntimeFileOperation } from '@/runtime/runtime-file-client'
 import type { RuntimeFileOperationArgs } from '@/runtime/runtime-file-client-types'
 import { mapTerminalFilePath, terminalLinkWslDistro } from './terminal-file-open-routing'
+import { mayCheckFileLinkTargetUnprompted } from './terminal-file-link-target'
 import {
   getTerminalPathExistsCacheKey,
   readTerminalPathExistsCache,
@@ -23,6 +24,7 @@ import {
 export type ContextualFileLinkTarget = { anchorPath: string; absolutePath: string }
 
 const MAX_PRIOR_LINES = 80
+const MAX_PRIOR_ANCHORS = 24
 const MAX_DISTINCT_TARGETS = 8
 const MAX_ANCHOR_CHARS = 2048
 
@@ -73,6 +75,9 @@ export function collectPriorTerminalFileLinkAnchors(
           continue
         }
         anchors.set(anchor.comparisonKey, anchor.normalized)
+        if (anchors.size >= MAX_PRIOR_ANCHORS) {
+          return [...anchors.values()]
+        }
       }
     }
   }
@@ -98,8 +103,9 @@ export function contextualFileLinkTargets(
   }
   const targets = new Map<string, ContextualFileLinkTarget>()
   const distinctTargets = new Set<string>()
-  for (const anchorPath of priorAnchors ??
-    collectPriorTerminalFileLinkAnchors(buffer, bufferLineNumber, cwd, homePath)) {
+  const anchors =
+    priorAnchors ?? collectPriorTerminalFileLinkAnchors(buffer, bufferLineNumber, cwd, homePath)
+  for (const anchorPath of anchors.slice(0, MAX_PRIOR_ANCHORS)) {
     const anchor = normalizeAbsolutePath(anchorPath)
     if (!anchor) {
       continue
@@ -196,8 +202,26 @@ export async function resolveExistingTerminalFileLinkPath(args: {
     return value
   }
   const mappedPath = mapPath(resolved.absolutePath)
-  if (resolveKnownWorktreeRootPathLink(mappedPath)) {
+  const isAllowed = (path: string): boolean =>
+    mayCheckFileLinkTargetUnprompted(
+      {
+        absolutePath: path,
+        isKnownWorktreeRoot: Boolean(
+          resolveKnownWorktreeRootPathLink(path, undefined, args.fileContext)
+        ),
+        isRemoteRuntimePath: isRemoteRuntimeFileOperation(args.fileContext, path)
+      },
+      {
+        worktreePath: args.worktreePath,
+        wslDistro: args.wslDistro,
+        runtimeEnvironmentId: args.runtimeEnvironmentId
+      }
+    )
+  if (resolveKnownWorktreeRootPathLink(mappedPath, undefined, args.fileContext)) {
     return mappedPath
+  }
+  if (!isAllowed(mappedPath)) {
+    return null
   }
   if (/[\\/]$/.test(args.parsed.pathText)) {
     return null
@@ -222,6 +246,9 @@ export async function resolveExistingTerminalFileLinkPath(args: {
     candidates.map(async ({ anchorPath, absolutePath }) => {
       const anchor = mapPath(anchorPath)
       const target = mapPath(absolutePath)
+      if (!isAllowed(anchor) || !isAllowed(target)) {
+        return null
+      }
       return (await exists(anchor, false, true)) && (await exists(target, false, true))
         ? target
         : null

@@ -1,4 +1,5 @@
 import { recognizeAgentProcess } from '../../shared/agent-process-recognition'
+import type { LocalPtyAgentOwnerObservation } from './local-pty-agent-owner-observation'
 import type { RuntimePtyController } from './runtime-pty-controller-contract'
 import type {
   PtyForegroundAgentRefresh,
@@ -12,12 +13,33 @@ type Dependencies = {
   getPty(ptyId: string): RuntimePtyWorktreeRecord | null
   touchSnapshot(ptyId: string): void
   finishDelayedSnapshot(ptyId: string, changed: boolean): void
+  retireLaunchOwner(ptyId: string): void
+  observeLocalOwner(pty: RuntimePtyWorktreeRecord): Promise<LocalPtyAgentOwnerObservation>
 }
 
 export class RuntimePtyForegroundAgent {
   private readonly refreshes = new Map<string, PtyForegroundAgentRefresh>()
   private readonly reads = new Map<string, PtyForegroundProcessReadEntry>()
   private readonly delayedTitles = new Map<string, number>()
+  private readonly observedLaunches = new WeakMap<
+    RuntimePtyWorktreeRecord,
+    {
+      agent: RuntimePtyWorktreeRecord['launchAgent']
+      token: string | null
+      incarnation: string | null
+    }
+  >()
+  private readonly ownerProofs = new WeakMap<
+    RuntimePtyWorktreeRecord,
+    {
+      agent: RuntimePtyWorktreeRecord['launchAgent']
+      token: string | null
+      incarnation: string | null
+      readAgent: RuntimePtyWorktreeRecord['foregroundAgent']
+      nativeStatus: RuntimePtyWorktreeRecord['lastAgentStatus']
+      observation: LocalPtyAgentOwnerObservation
+    }
+  >()
 
   constructor(private readonly deps: Dependencies) {}
 
@@ -120,14 +142,109 @@ export class RuntimePtyForegroundAgent {
   private async load(ptyId: string, afterTitle: number): Promise<boolean> {
     const controller = this.deps.getController()
     const pty = this.deps.getPty(ptyId)
-    if (!controller || !pty?.connected || pty.launchAgent) {
+    if (!controller || !pty?.connected) {
       return false
     }
+    const incarnation = pty.incarnationId
+    const launchAgent = pty.launchAgent
+    const launchToken = pty.launchToken
     const result = await this.read(ptyId, afterTitle)
-    if (!result || result.controller !== this.deps.getController() || !result.available) {
+    if (
+      !result ||
+      result.controller !== this.deps.getController() ||
+      !result.available ||
+      this.deps.getPty(ptyId) !== pty ||
+      pty.incarnationId !== incarnation ||
+      pty.launchAgent !== launchAgent ||
+      pty.launchToken !== launchToken ||
+      !pty.connected
+    ) {
       return false
     }
-    const agent = result.process ? (recognizeAgentProcess(result.process)?.agent ?? null) : null
+    const readAgent = result.process ? (recognizeAgentProcess(result.process)?.agent ?? null) : null
+    const nativeStatus = pty.lastAgentStatus
+    const observedLaunch = this.observedLaunches.get(pty)
+    const launchWasObserved =
+      observedLaunch?.agent === launchAgent &&
+      observedLaunch?.token === launchToken &&
+      observedLaunch?.incarnation === incarnation
+    const previousProof = this.ownerProofs.get(pty)
+    const reusableProof =
+      previousProof?.agent === launchAgent &&
+      previousProof.token === launchToken &&
+      previousProof.incarnation === incarnation &&
+      previousProof.readAgent === readAgent &&
+      previousProof.nativeStatus === nativeStatus &&
+      previousProof.observation.available
+    if (!reusableProof) {
+      this.ownerProofs.delete(pty)
+    }
+    const needsOwnerProof = pty.launchAgent
+      ? readAgent !== pty.launchAgent || !launchWasObserved
+      : readAgent !== pty.foregroundAgent
+    const localOwner: LocalPtyAgentOwnerObservation =
+      reusableProof && (!launchAgent || launchWasObserved)
+        ? previousProof.observation
+        : needsOwnerProof
+          ? await this.deps.observeLocalOwner(pty)
+          : { available: false }
+    if (
+      this.deps.getPty(ptyId) !== pty ||
+      pty.incarnationId !== incarnation ||
+      pty.launchAgent !== launchAgent ||
+      pty.launchToken !== launchToken ||
+      pty.lastAgentStatus !== nativeStatus ||
+      this.deps.getController() !== controller ||
+      !pty.connected
+    ) {
+      return false
+    }
+    if (needsOwnerProof && localOwner.available) {
+      this.ownerProofs.set(pty, {
+        agent: launchAgent,
+        token: launchToken,
+        incarnation,
+        readAgent,
+        nativeStatus,
+        observation: localOwner
+      })
+    }
+    if (pty.launchAgent && localOwner.launchPresent) {
+      this.observedLaunches.set(pty, { agent: launchAgent, token: launchToken, incarnation })
+    }
+    if (pty.launchAgent) {
+      // A complete local inventory distinguishes the parent from its nested tools.
+      if (readAgent !== pty.launchAgent) {
+        if (
+          !localOwner.available ||
+          localOwner.launchPresent ||
+          (pty.launchToken && !launchWasObserved && !localOwner.agent)
+        ) {
+          return false
+        }
+        if (!localOwner.agent && !(await controller.confirmShellForeground?.(ptyId))) {
+          return false
+        }
+        if (
+          this.deps.getPty(ptyId) !== pty ||
+          pty.incarnationId !== incarnation ||
+          pty.launchAgent !== launchAgent ||
+          pty.launchToken !== launchToken ||
+          pty.lastAgentStatus !== nativeStatus ||
+          this.deps.getController() !== controller ||
+          !pty.connected
+        ) {
+          return false
+        }
+        this.deps.retireLaunchOwner(ptyId)
+      }
+    }
+    // An ambiguous or unreadable local lineage cannot transfer an existing owner.
+    const agent = localOwner.available
+      ? localOwner.agent
+      : needsOwnerProof && localOwner.local && pty.foregroundAgent
+        ? pty.foregroundAgent
+        : readAgent
     if (pty.foregroundAgent === agent) {
       return false
     }

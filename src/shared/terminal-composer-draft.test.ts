@@ -46,6 +46,42 @@ describe('detectTerminalComposerDraft', () => {
     expect(hasTerminalComposerPlaceholder(context)).toBe(true)
   })
 
+  it('keeps typed text that starts with a stock placeholder phrase', () => {
+    const context = {
+      rows: ['────────', '❯ Try "pnpm test" and report back'],
+      typedRows: ['────────', '❯ Try "pnpm test" and report back'],
+      promptGlyphBoldRows: [false, false],
+      rowsBelow: [],
+      typedRowsBelow: [],
+      beforeCursor: '❯ ',
+      afterCursor: 'Try "pnpm test" and report back',
+      rawAfterCursor: 'Try "pnpm test" and report back',
+      cursorHidden: false,
+      cursorViewportRow: 8
+    }
+
+    expect(hasTerminalComposerPlaceholder(context)).toBe(false)
+    expect(detectTerminalComposerDraft(context)?.text).toBe('Try "pnpm test" and report back')
+  })
+
+  it('does not discard a typed continuation below a dim placeholder phrase', () => {
+    const context = {
+      rows: ['────────', '❯ Try "pnpm test"'],
+      typedRows: ['────────', '❯'],
+      promptGlyphBoldRows: [false, false],
+      rowsBelow: ['and report back'],
+      typedRowsBelow: ['and report back'],
+      beforeCursor: '❯ ',
+      afterCursor: '',
+      rawAfterCursor: 'Try "pnpm test"',
+      cursorHidden: false,
+      cursorViewportRow: 8
+    }
+
+    expect(hasTerminalComposerPlaceholder(context)).toBe(false)
+    expect(detectTerminalComposerDraft(context)).not.toBeNull()
+  })
+
   it('keeps a typed draft whose stock placeholder is still rendered to its right', () => {
     // The placeholder normally clears the moment you type, but a repaint can land the two on the
     // row together. Classifying that as a placeholder would mask the row the user's text is on.

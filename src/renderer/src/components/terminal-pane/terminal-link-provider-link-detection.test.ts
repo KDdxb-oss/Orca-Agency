@@ -295,6 +295,28 @@ describe('createFilePathLinkProvider range bounds', () => {
     expect(pathExistsCache.get('active\0/app-code/docs/agent/linked.md')).toBe(true)
   })
 
+  it('links a relative file through an earlier sibling path in the same pane', async () => {
+    vi.mocked(window.api.shell.pathExists).mockImplementation(
+      async (pathValue) =>
+        pathValue === '/app-code/docs/agent/research.md' ||
+        pathValue === '/app-code/docs/agent/linked.md'
+    )
+    const { provider } = createProviderSetup(
+      [
+        makeBufferLine('Wrote /app-code/docs/agent/research.md'),
+        makeBufferLine('See docs/agent/linked.md')
+      ],
+      new Map(),
+      { startupCwd: '/workspace/client' }
+    )
+
+    const links = await new Promise<ILink[]>((resolve) => {
+      provider.provideLinks(2, (provided) => resolve(provided ?? []))
+    })
+
+    expect(links.map((link) => link.text)).toEqual(['docs/agent/linked.md'])
+  })
+
   it('rechecks a cached missing cwd file before choosing another directory', async () => {
     vi.mocked(window.api.shell.pathExists).mockImplementation(
       async (pathValue) =>

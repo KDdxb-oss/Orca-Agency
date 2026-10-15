@@ -43,7 +43,7 @@ export function registerTerminalPanePasteListeners({
     setTerminalError,
     worktreeId
   } = controller
-  const { executePanePasteText, pasteFromClipboard } = execution
+  const { executePanePasteText, pasteFromClipboard, resolveProtectedMultilineOptions } = execution
   let suppressNextNativePaste = false
   let pasteSuppressionTimerId: number | null = null
   const shouldSuppressNativePaste = (event: KeyboardEvent): boolean => {
@@ -188,6 +188,7 @@ export function registerTerminalPanePasteListeners({
       connectionId,
       runtimeEnvironmentId,
       forceBracketedMultilineTextPaste,
+      protectedMultilineTextPasteOptions: resolveProtectedMultilineOptions(pane),
       pasteText: (text, options) =>
         executePanePasteText(pane, 'app-menu', activeElementAtDispatch, text, options),
       onTextPasteError: () =>

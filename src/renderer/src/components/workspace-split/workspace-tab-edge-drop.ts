@@ -2,6 +2,7 @@ import { useAppStore } from '@/store'
 import { activateAndRevealWorkspace } from '@/lib/worktree-activation'
 import { buildChatSidebarRows, chatSidebarWorktrees } from '../sidebar/chat-sidebar-rows'
 import { detachSidebarChat } from '../sidebar/chat-sidebar-detach'
+import type { WorkspacePanePlacement } from '@/lib/workspace-pane-placement'
 import {
   collectWorkspaceIds,
   findWorkspaceSplitGroup,
@@ -30,6 +31,7 @@ export async function dropTerminalTabAtWorkspaceEdge(args: {
   targetId: string
   edge: WorkspaceSplitEdge
   wholeWindow: boolean
+  placement?: WorkspacePanePlacement
 }): Promise<void> {
   const state = useAppStore.getState()
   const tab = state.unifiedTabsByWorktree[args.sourceId]?.find(
@@ -91,8 +93,12 @@ export async function dropTerminalTabAtWorkspaceEdge(args: {
       providesInitialSurface: true
     }) !== false
   ) {
-    useAppStore
-      .getState()
-      .placeWorkspaceAtEdge(sourceId, args.targetId, args.edge, args.wholeWindow)
+    if (args.placement) {
+      useAppStore.getState().placeWorkspacePane(sourceId, args.targetId, args.placement)
+    } else {
+      useAppStore
+        .getState()
+        .placeWorkspaceAtEdge(sourceId, args.targetId, args.edge, args.wholeWindow)
+    }
   }
 }

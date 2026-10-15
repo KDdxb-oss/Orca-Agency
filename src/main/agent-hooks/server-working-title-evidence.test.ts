@@ -117,4 +117,68 @@ describe('live working-title evidence in the authoritative store', () => {
     expect(internal.state.lastStatusByPaneKey.get(PANE)).toEqual(previous)
     expect(server.getStatusSnapshot()[0].evidenceObservedAt).toBe(1_000)
   })
+
+  it.each([1_001, 999])(
+    'confirms retained local working state without moving clocks backwards at %i',
+    (clock) => {
+      const server = new AgentHookServer()
+      seed(server)
+      const timing = server.getStatusSnapshot()[0]
+      // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: The fixture marks the same admitted row as hydrated.
+      const internal = server as unknown as { state: HookListenerState }
+      const previous = {
+        ...internal.state.lastStatusByPaneKey.get(PANE)!,
+        terminalHandle: undefined,
+        launchToken: 'retained-test-token',
+        restoredUnconfirmed: true as const
+      }
+      seedLegacyAgentStatusForTests(internal.state, previous)
+      const listener = vi.fn()
+      server.setListener(listener)
+      listener.mockClear()
+      vi.setSystemTime(clock)
+      server.ingestTerminalStatus({
+        ...event,
+        confirmRestoredWorkingTitle: true,
+        restoredLaunchToken: 'retained-test-token'
+      })
+      const confirmed = internal.state.lastStatusByPaneKey.get(PANE)!
+      expect(confirmed.restoredUnconfirmed).toBeUndefined()
+      expect(confirmed).toMatchObject({
+        payload: previous.payload,
+        stateStartedAt: timing.stateStartedAt,
+        turnStartedAt: timing.turnStartedAt,
+        receivedAt: 1_001,
+        evidenceObservedAt: 1_001,
+        terminalHandle: event.terminalHandle,
+        observation: expect.objectContaining({ origin: 'osc', observedAt: 1_001 })
+      })
+      expect(listener).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it.each([
+    { terminalHandle: 'another-terminal' },
+    { connectionId: 'remote-host' },
+    { providerSessionOnly: true },
+    { payload: { state: 'done' as const, prompt: '', agentType: 'codex' } },
+    { payload: { ...event.payload, mainAgent: { state: 'done' as const, stateStartedAt: 1_000 } } }
+  ])(
+    'does not use native confirmation to revive an unrelated or settled restored row: %j',
+    (override) => {
+      const server = new AgentHookServer()
+      seed(server)
+      // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: The fixture marks an admitted row as hydrated and seeds the refusal case.
+      const internal = server as unknown as { state: HookListenerState }
+      const previous = {
+        ...internal.state.lastStatusByPaneKey.get(PANE)!,
+        ...override,
+        restoredUnconfirmed: true as const
+      }
+      seedLegacyAgentStatusForTests(internal.state, previous)
+      vi.setSystemTime(1_001 + AGENT_STATUS_STALE_AFTER_MS)
+      server.ingestTerminalStatus({ ...event, confirmRestoredWorkingTitle: true })
+      expect(internal.state.lastStatusByPaneKey.get(PANE)).toEqual(previous)
+    }
+  )
 })

@@ -85,6 +85,7 @@ export function idleTerminalChatRows(args: {
       timestamp: sleeping?.updatedAt ?? sessionAt,
       turnStartedAt: chatSessionHumanTurnTime(session),
       activityFromState: false,
+      promptBackedWorking: false,
       state: 'idle',
       completed: false,
       ownsWorkspaceName: false,

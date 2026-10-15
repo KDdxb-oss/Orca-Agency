@@ -30,6 +30,7 @@ export type PrepareCodexResumeHomeArgs = {
   providerSession?: AgentProviderSessionMetadata
   target: CodexAccountSelectionTarget
   launchEnv?: NodeJS.ProcessEnv
+  useSelectedAccount?: boolean
 }
 
 export function prepareCodexResumeHome(
@@ -48,7 +49,8 @@ export function prepareCodexResumeHome(
     preparation: prepareCodexSessionResume({
       providerSession,
       target: args.target,
-      launchEnv: args.launchEnv
+      launchEnv: args.launchEnv,
+      ...(args.useSelectedAccount ? { useSelectedAccount: true } : {})
     })
   }
 }
@@ -98,6 +100,38 @@ export function resolveCodexResumeLaunch(
       droppedResumeArgv: dropped.droppedResumeArgv,
       providerSession
     }
+  })
+}
+
+/** A replacement must honor today's account/home selection, even without a renderer notice. */
+export async function resolveCodexReplacementResumeLaunch(args: {
+  command: string | undefined
+  prepared: PreparedCodexResumeHome
+  resolveLaunch: typeof resolveCodexResumeLaunch
+  resolveCurrentHome: () => Promise<string | null>
+  isEquivalentDefaultHome?: (verifiedHome: string, currentHome: string | null) => boolean
+}): Promise<CodexResumeLaunch> {
+  const prepared = await args.prepared.preparation.catch(() => ({
+    outcome: 'fresh' as const,
+    claimedCodexProvenance: true
+  }))
+  const launch = await args.resolveLaunch(args.command, {
+    ...args.prepared,
+    preparation: Promise.resolve(prepared)
+  })
+  if (!launch.codexResumeHome) {
+    return launch
+  }
+  const currentHome = await args.resolveCurrentHome()
+  if (
+    codexHomePathsEqual(currentHome, launch.codexResumeHome.codexHomePath) ||
+    args.isEquivalentDefaultHome?.(launch.codexResumeHome.codexHomePath, currentHome)
+  ) {
+    return launch
+  }
+  return args.resolveLaunch(args.command, {
+    ...args.prepared,
+    preparation: Promise.resolve({ outcome: 'fresh', claimedCodexProvenance: true })
   })
 }
 

@@ -502,7 +502,8 @@ describe('OrcaRuntimeService', () => {
     expect(read).toMatchObject({
       source: 'screen',
       tail: ['Build passed', '────────', '❯'],
-      draft: 'proceed with the release\nand close the pull request'
+      draft: 'proceed with the release\nand close the pull request',
+      composerState: 'draft'
     })
   })
 

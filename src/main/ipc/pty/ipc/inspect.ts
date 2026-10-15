@@ -77,6 +77,7 @@ export function installPtyInspectIpcHandlers(deps: {
               cwd: session.cwd,
               title: session.title,
               ...(session.worktreeId !== undefined ? { worktreeId: session.worktreeId } : {}),
+              ...(session.exiting === true ? { exiting: true as const } : {}),
               // Why: the renderer's binding map is empty during restore, so ownership is the only
               // liveness evidence it has. Absence is authoritative only from a provider that
               // serializes claims — otherwise it is 'unknown', never 'absent' (#8459).
@@ -127,7 +128,7 @@ export function installPtyInspectIpcHandlers(deps: {
         }
         seen.add(value)
         const provider = tryGetProviderForPty(value)
-        // Resolved providers without the optional method are definitively non-authoritative; null remains retryable.
+        // False is safe-side; a newly spawned session may become snapshot-backed on retry.
         capabilities.push({
           id: value,
           authoritative:

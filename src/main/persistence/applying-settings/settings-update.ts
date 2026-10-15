@@ -1,3 +1,4 @@
+import { normalizeNativeChatAppearanceSettings } from '../../../shared/native-chat-appearance-settings'
 import type { GlobalSettings } from '../../../shared/global-settings-types'
 import { normalizeDisabledTuiAgents } from '../../../shared/tui-agent-selection'
 import { resolveNestedWorkerMaxDepth } from '../../../shared/nested-worker-depth'
@@ -54,14 +55,15 @@ export type SettingsMutationOperations = {
 export function updateSettings(
   operations: SettingsMutationOperations,
   updates: Partial<GlobalSettings>,
-  options: { notifyListeners?: boolean; originWebContentsId?: number } = {}
+  options: {
+    notifyListeners?: boolean
+    originWebContentsId?: number
+    revokeAutomationChatIds?: readonly string[]
+  } = {}
 ): GlobalSettings {
   const sanitizedUpdates = stripRetiredGlobalSettings(updates)
   if ('opencodeSessionCookie' in updates && !updates.opencodeSessionCookie) {
     operations.removeRetainedBlob(PROTECTED_SECRET_SLOT.opencodeSessionCookie)
-  }
-  if ('opencodeGoApiKey' in updates && !updates.opencodeGoApiKey) {
-    operations.removeRetainedBlob(PROTECTED_SECRET_SLOT.opencodeGoApiKey)
   }
   if ('httpProxyUrl' in updates && !updates.httpProxyUrl) {
     operations.removeRetainedBlob(PROTECTED_SECRET_SLOT.httpProxyUrl)
@@ -84,6 +86,11 @@ export function updateSettings(
     sanitizedUpdates.nestedWorkerMaxDepth = resolveNestedWorkerMaxDepth({
       nestedWorkerMaxDepth: updates.nestedWorkerMaxDepth
     })
+  }
+  if ('nativeChatAppearance' in updates) {
+    sanitizedUpdates.nativeChatAppearance = normalizeNativeChatAppearanceSettings(
+      updates.nativeChatAppearance
+    )
   }
   if ('disabledTuiAgents' in updates) {
     sanitizedUpdates.disabledTuiAgents = normalizeDisabledTuiAgents(updates.disabledTuiAgents)
@@ -253,6 +260,7 @@ export function updateSettings(
   const previousSettings = operations.state.settings
   // Why: a renderer preference write can race a host-owned automation-origin write.
   if (sanitizedUpdates.chatSidebar && previousSettings.chatSidebar?.automationChats?.length) {
+    const revoked = new Set(options.revokeAutomationChatIds ?? [])
     sanitizedUpdates.chatSidebar = {
       ...sanitizedUpdates.chatSidebar,
       automationChats: [
@@ -260,7 +268,7 @@ export function updateSettings(
           ...previousSettings.chatSidebar.automationChats,
           ...(sanitizedUpdates.chatSidebar.automationChats ?? [])
         ])
-      ]
+      ].filter((id) => !revoked.has(id))
     }
   }
   operations.state.settings = {

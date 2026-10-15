@@ -59,7 +59,9 @@ export abstract class AgentHookServerStatusApplication extends AgentHookServerSt
     previous: EnrichedAgentHookEventPayload,
     mutationBefore?: EnrichedAgentHookEventPayload,
     emitEnrichedStatus = false,
-    origin: AgentStatusObservationOrigin = 'osc'
+    origin: AgentStatusObservationOrigin = 'osc',
+    confirmedTerminalHandle?: string,
+    nativeWorkingOnly = false
   ): void {
     if (!this.canWriteLegacyStatusRow(previous)) {
       return
@@ -67,7 +69,11 @@ export abstract class AgentHookServerStatusApplication extends AgentHookServerSt
     const connectionClearWatermark = previous.connectionId
       ? this.connectionTimestampWatermarkById.get(previous.connectionId)
       : undefined
-    const now = Math.max(Date.now(), (connectionClearWatermark ?? -1) + 1)
+    const now = Math.max(
+      Date.now(),
+      (connectionClearWatermark ?? -1) + 1,
+      previous.restoredUnconfirmed ? previous.receivedAt + 1 : -1
+    )
     if (previous.connectionId) {
       this.connectionTimestampWatermarkById.set(previous.connectionId, now)
     }
@@ -80,14 +86,31 @@ export abstract class AgentHookServerStatusApplication extends AgentHookServerSt
       isReplay: _isReplay,
       ...payload
     } = previous
+    // Reattached PTYs do not recover launch tokens. Their fresh native output proves the current
+    // working state, not the saved hook's task or launch authority. Retain its known resume ID
+    // (as normal OSC updates do), but do not advertise it as a live hook observation.
+    const currentPayload: EnrichedAgentHookEventPayload = nativeWorkingOnly
+      ? {
+          paneKey: payload.paneKey,
+          tabId: payload.tabId,
+          worktreeId: payload.worktreeId,
+          connectionId: payload.connectionId,
+          providerSession: payload.providerSession,
+          receivedAt: now,
+          stateStartedAt,
+          turnStartedAt: payload.turnStartedAt,
+          payload: { state: 'working', prompt: '', agentType: 'codex' }
+        }
+      : { ...payload, receivedAt: now, stateStartedAt }
     const refreshed: EnrichedAgentHookEventPayload = {
-      ...payload,
+      ...currentPayload,
+      ...(confirmedTerminalHandle ? { terminalHandle: confirmedTerminalHandle } : {}),
       receivedAt: now,
       evidenceObservedAt: now,
       stateStartedAt,
       observation:
         origin === 'osc'
-          ? this.stampObservation(payload, origin, now)
+          ? this.stampObservation(currentPayload, origin, now)
           : this.observations.observe(payload.paneKey, {
               origin,
               observedAt: now,

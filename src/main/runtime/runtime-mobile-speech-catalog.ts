@@ -31,7 +31,7 @@ export class RuntimeMobileSpeechCatalog {
     })
     return {
       enabled: voice.enabled === true,
-      selectedModelId: voice.sttModel ?? '',
+      selectedModelId: models.some((model) => model.id === voice.sttModel) ? voice.sttModel : '',
       dictationMode: voice.dictationMode === 'hold' ? 'hold' : 'toggle',
       models
     }

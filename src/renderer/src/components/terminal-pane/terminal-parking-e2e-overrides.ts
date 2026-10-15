@@ -6,6 +6,7 @@ import {
 import { getParkedTerminalWatcherTabIds } from './terminal-parked-tab-watchers'
 import { resolveTabScrollbackBuffers } from './leaf-scrollback-resolution'
 import { useAppStore } from '@/store'
+import { terminalProviderHasAuthoritativeSnapshot } from '../terminal/terminal-provider-snapshot-capability'
 
 export type TerminalWorktreeParkingDebugVerdict = {
   worktreeId: string
@@ -53,6 +54,7 @@ export function registerTerminalParkingDebugHandle(): void {
     parkDelayMs:
       getTerminalParkingPolicyOverrides().coldParkDelayMs ?? TERMINAL_TAB_COLD_PARK_DELAY_MS,
     parkedTabIds: () => getParkedTerminalWatcherTabIds(),
+    authoritativeSnapshot: terminalProviderHasAuthoritativeSnapshot,
     // Why through the resolver: a spec that reads one store home directly reports a false zero
     // whenever the bytes live in the other one.
     resolveLeafScrollback: (tabId) => resolveTabScrollbackBuffers(useAppStore.getState(), tabId),

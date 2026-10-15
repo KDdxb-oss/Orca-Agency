@@ -79,6 +79,8 @@ export type ClaudeSessionParseState = {
   firstUserTitle: string | null
   resumedSessionIdPrefix: string | null
   lastHumanTurnAt: string | null
+  sawSdkCli: boolean
+  sawOtherEntrypoint: boolean
 }
 
 export function createClaudeSessionParseState(
@@ -96,7 +98,9 @@ export function createClaudeSessionParseState(
     generatedTitle: null,
     firstUserTitle: null,
     resumedSessionIdPrefix: null,
-    lastHumanTurnAt: null
+    lastHumanTurnAt: null,
+    sawSdkCli: false,
+    sawOtherEntrypoint: false
   }
 }
 
@@ -112,7 +116,9 @@ export function cloneClaudeSessionParseState(
     generatedTitle: state.generatedTitle,
     firstUserTitle: state.firstUserTitle,
     resumedSessionIdPrefix: state.resumedSessionIdPrefix,
-    lastHumanTurnAt: state.lastHumanTurnAt
+    lastHumanTurnAt: state.lastHumanTurnAt,
+    sawSdkCli: state.sawSdkCli,
+    sawOtherEntrypoint: state.sawOtherEntrypoint
   }
 }
 
@@ -121,6 +127,12 @@ export function consumeClaudeSessionLine(state: ClaudeSessionParseState, line: s
   const record = parseJsonObject(line)
   if (!record) {
     return
+  }
+
+  if (record.entrypoint === 'sdk-cli') {
+    state.sawSdkCli = true
+  } else if (typeof record.entrypoint === 'string' && record.entrypoint.trim()) {
+    state.sawOtherEntrypoint = true
   }
 
   if (typeof record.sessionId === 'string' && record.sessionId.trim()) {
@@ -254,7 +266,8 @@ export async function finalizeClaudeSessionParseState(
         ...(snapshot.resumedSessionIdPrefix
           ? { resumedSessionIdPrefix: snapshot.resumedSessionIdPrefix }
           : {}),
-        ...(snapshot.lastHumanTurnAt ? { lastHumanTurnAt: snapshot.lastHumanTurnAt } : {})
+        ...(snapshot.lastHumanTurnAt ? { lastHumanTurnAt: snapshot.lastHumanTurnAt } : {}),
+        ...(snapshot.sawSdkCli && !snapshot.sawOtherEntrypoint ? { isHeadless: true as const } : {})
       }
     : null
 }

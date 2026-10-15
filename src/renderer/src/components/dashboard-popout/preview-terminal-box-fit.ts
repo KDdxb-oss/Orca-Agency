@@ -1,3 +1,5 @@
+import { PaneReparentFrameTracker } from '@/lib/pane-manager/pane-reparent-frame-tracker'
+
 type PreviewBoxFitTerminal = { rows: number; buffer: { active: { cursorY: number } } }
 
 /** `width` clips tall buffers so the cursor row stays readable; `both` because a claim clamped at the 8-row floor overflows a grid card. */
@@ -32,12 +34,17 @@ export function createPreviewBoxFit(args: {
   container: HTMLElement
   getTerminal: () => PreviewBoxFitTerminal | null
   fitAxis?: PreviewBoxFitAxis
-}): { fit: () => void; schedule: () => void } {
+}): { fit: () => void; schedule: () => void; dispose: () => void } {
   const fitAxis = args.fitAxis ?? 'width'
+  let disposed = false
+  const frames = new PaneReparentFrameTracker(() => disposed)
   let scheduled = false
   let retriesLeft = UNMEASURABLE_RETRY_FRAMES
 
   const fit = (): void => {
+    if (disposed) {
+      return
+    }
     const terminal = args.getTerminal()
     const screen = args.container.querySelector<HTMLElement>('.xterm-screen')
     const box = args.container.parentElement
@@ -77,15 +84,25 @@ export function createPreviewBoxFit(args: {
 
   // Re-fit after every parsed write (cursor may move ends); rAF coalesces.
   const schedule = (): void => {
-    if (scheduled) {
+    if (disposed || scheduled) {
       return
     }
     scheduled = true
-    requestAnimationFrame(() => {
+    frames.request(() => {
       scheduled = false
       fit()
     })
   }
 
-  return { fit, schedule }
+  return {
+    fit,
+    schedule,
+    dispose: (): void => {
+      if (disposed) {
+        return
+      }
+      disposed = true
+      frames.cancelPending()
+    }
+  }
 }

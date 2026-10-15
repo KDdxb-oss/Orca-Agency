@@ -114,6 +114,7 @@ export function chatRow(overrides: Partial<ChatSidebarRow> = {}): ChatSidebarRow
     timestamp: 1_000,
     turnStartedAt: 1_000,
     activityFromState: false,
+    promptBackedWorking: overrides.state === 'working',
     state: 'idle',
     completed: false,
     ownsWorkspaceName: false,

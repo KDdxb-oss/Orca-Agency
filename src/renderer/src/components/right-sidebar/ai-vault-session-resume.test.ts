@@ -507,6 +507,29 @@ describe('resolveAiVaultSessionResumeActions', () => {
 })
 
 describe('resolveAiVaultSessionLaunchTarget', () => {
+  it('accepts a folder workspace created after the resume panel rendered', () => {
+    const before = makeTargetState()
+    const after = makeFolderTargetState({ id: 'group-1' })
+    const workspaceId = folderWorkspaceKey('folder-1')
+
+    expect(
+      resolveAiVaultSessionLaunchTarget({
+        sessionFilePath: HOST_SESSION_FILE,
+        activeWorktreeId: null,
+        targetWorktreeId: workspaceId,
+        targetState: before
+      })
+    ).toEqual({ status: 'missing' })
+    expect(
+      resolveAiVaultSessionLaunchTarget({
+        sessionFilePath: HOST_SESSION_FILE,
+        activeWorktreeId: null,
+        targetWorktreeId: workspaceId,
+        targetState: after
+      })
+    ).toEqual({ status: 'ready', worktreeId: workspaceId })
+  })
+
   it('allows direct resume into an active SSH folder workspace', () => {
     expect(
       resolveAiVaultSessionLaunchTarget({

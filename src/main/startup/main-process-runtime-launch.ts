@@ -7,10 +7,11 @@ import {
   migrateMobilePairingDataToCanonicalUserDataPath
 } from '../persistence'
 import { OrcaRuntimeRpcServer } from '../runtime/runtime-rpc'
+import { runtimeNetworkLaunchOptions } from './runtime-network-launch-options'
 import { registerMobileHandlers } from '../ipc/mobile'
 import { getLocalPtyProvider, registerHeadlessPtyRuntime } from '../ipc/pty'
 import { LocalPtyProvider } from '../providers/local-pty-provider'
-import { HEADLESS_RUNTIME_WINDOW_ID } from '../../shared/runtime-types'
+import { publishHeadlessRuntimeGraph } from '../runtime/headless-runtime-graph'
 import { OffscreenBrowserBackend } from '../browser/offscreen-browser-backend'
 import { browserManager } from '../browser/browser-manager'
 import { getDesktopRelayStatus, publishDesktopRelayStatus } from './main-process-relay-status'
@@ -26,7 +27,8 @@ import { prepareCodexRuntimeHomeForLaunch } from './codex-launch-preparation'
 import { prepareCodexSessionResumeForLaunch } from './codex-session-resume-launch'
 import { startWindowsDesktopBeforeShellPathReady } from './windows-desktop-shell-path-startup'
 import { repairKnownPoisonedInstallDirBeforeWindow } from './windows-install-dir-acl-recovery'
-import { registerServeSignalHandlers } from './serve-signal-handlers'
+import { installServeQuitHandling } from './serve-quit-handling'
+import { registerHeadlessServeSshHandlers } from './headless-serve-ssh-registration'
 import { settleServeDesktopActivation } from './serve-desktop-activation'
 import {
   recordRuntimeRpcStartFailure,
@@ -39,6 +41,7 @@ import { triggerStartupNotificationRegistration } from '../ipc/startup-notificat
 import { startDesktopPushService } from './main-process-push-startup'
 import { mainProcessState as state } from './main-process-state'
 import { logStartupMilestone } from './startup-diagnostics'
+import { scheduleAgentLaunchRecordWarmup } from './agent-launch-record-warmup'
 import { emitServeBrowserIdentityActionLine } from '../server/serve-stdout-boundary'
 import { getBrowserIdentityModeStatus } from '../browser/browser-identity-mode-store'
 
@@ -80,8 +83,8 @@ function installRuntimeRpc(
     userDataPath: getCanonicalUserDataPath(),
     enableWebSocket: true,
     // Why: STA-2370 — the desktop app binds the WS listener to loopback until the user pairs a device;
-    // `orca serve` is an explicit remote opt-in, and E2E keeps the wide bind its harness connects over.
-    exposeNetworkByDefault: Boolean(serveOptions) || isE2E,
+    // `orca serve` opts into remote access; isolated UI tests can explicitly pin loopback.
+    ...runtimeNetworkLaunchOptions(Boolean(serveOptions), isE2E),
     ...(isE2E ? { wsPort: e2eWsPort } : {}),
     ...(devWsPort !== undefined ? { wsPort: devWsPort } : {}),
     ...(serveOptions?.wsPort !== undefined
@@ -156,18 +159,19 @@ async function launchServeMode(
       })
     )
   }
-  // Why: headless servers have no renderer graph publisher; publish an explicit empty graph so status clients see a ready server.
-  runtime.syncWindowGraph(HEADLESS_RUNTIME_WINDOW_ID, { tabs: [], leaves: [] })
+  publishHeadlessRuntimeGraph(runtime)
+  // Why before RPC binds: the first paired client must already see this host's SSH targets.
+  registerHeadlessServeSshHandlers(state.store!, runtime)
   await runtimeRpc.start().catch((error) => {
     console.error('[runtime] Failed to start headless RPC transport:', error)
     throw error
   })
+  scheduleAgentLaunchRecordWarmup(null)
   // Why: a phone paired to a headless host still registers and unregisters its token;
   // it simply never receives a push, because nothing dispatches notifications here.
   startDesktopPushService(runtimeRpc)
   settleDesktopActivation()
-  // Why: every attempt must reach app.quit(); a page beforeunload can veto an earlier signal.
-  registerServeSignalHandlers(process, () => app.quit())
+  installServeQuitHandling()
   // Why: headless serve has no renderer to run the normal cli:install flow; do it here for macOS/Linux only (Windows-excluded: install() only mutates registry PATH, not child terminals).
   if (process.platform === 'darwin' || process.platform === 'linux') {
     try {
@@ -237,6 +241,7 @@ async function launchDesktopMode(
         }
       )
   ])
+  scheduleAgentLaunchRecordWarmup(win)
   if (!runtimeRpcStartResult.ok) {
     // Why gated: this dialog is the only launch-phase text read through translateMain, and i18n
     // now settles alongside this phase — without the wait a non-English user could get the
@@ -294,8 +299,7 @@ async function launchDesktopMode(
 export async function initializeMainProcessRuntimeLaunch(
   options: MainProcessRuntimeLaunchOptions
 ): Promise<void> {
-  const runtime = state.runtime
-  const shellPathHydration = state.windowsShellPathHydration
+  const { runtime, windowsShellPathHydration: shellPathHydration } = state
   if (!runtime || !shellPathHydration) {
     throw new Error('Runtime and shell-path services must be initialized before launch')
   }

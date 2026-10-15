@@ -1,5 +1,4 @@
 import { ipcMain } from 'electron'
-import { DaemonPtyRouter } from '../daemon/daemon-pty-router'
 import { DegradedDaemonPtyProvider } from '../daemon/degraded-daemon-pty-provider'
 import type { DaemonPtyAdapter } from '../daemon/daemon-pty-adapter'
 import {
@@ -7,7 +6,7 @@ import {
   getDaemonProvider,
   restartDaemon
 } from '../daemon/daemon-init'
-import { getCurrentDaemonAdapter } from '../daemon/daemon-provider-routing'
+import { getAllDaemonAdapters, getCurrentDaemonAdapter } from '../daemon/daemon-provider-routing'
 import {
   getDaemonFolderAccessMismatch,
   refreshDaemonFolderAccessProbe,
@@ -31,13 +30,7 @@ function sleep(ms: number): Promise<void> {
 
 function getDaemonAdapters(): DaemonPtyAdapter[] {
   const provider = getDaemonProvider()
-  if (!provider) {
-    return []
-  }
-  if (provider instanceof DaemonPtyRouter || provider instanceof DegradedDaemonPtyProvider) {
-    return [...provider.getAllAdapters()]
-  }
-  return [provider]
+  return provider ? [...getAllDaemonAdapters(provider)] : []
 }
 
 // Why: surface degraded mode (daemon alive but cannot spawn fresh PTYs) so the UI can warn new terminals lack persistence.
@@ -56,13 +49,15 @@ function readCurrentDaemonIdentity(): DaemonEndpointIdentity | null {
   return provider ? getCurrentDaemonAdapter(provider).getDaemonIdentity() : null
 }
 
-async function collectSessions(adapters: DaemonPtyAdapter[]): Promise<DaemonSessionInfo[]> {
+type OwnedDaemonSession = { session: DaemonSessionInfo; owner: DaemonPtyAdapter }
+
+async function collectSessions(adapters: DaemonPtyAdapter[]): Promise<OwnedDaemonSession[]> {
   const results = await Promise.allSettled(
     adapters.map(async (adapter) => {
       const sessions = await adapter.listSessions()
-      return sessions.map<DaemonSessionInfo>((s) => ({
-        ...s,
-        protocolVersion: adapter.protocolVersion
+      return sessions.map<OwnedDaemonSession>((s) => ({
+        session: { ...s, protocolVersion: adapter.protocolVersion },
+        owner: adapter
       }))
     })
   )
@@ -114,8 +109,8 @@ export function registerDaemonManagementHandlers(): void {
   ipcMain.handle(
     'pty:management:listSessions',
     async (): Promise<{ sessions: DaemonSessionInfo[]; degraded: boolean }> => {
-      const sessions = await collectSessions(getDaemonAdapters())
-      return { sessions, degraded: isDaemonDegraded() }
+      const owned = await collectSessions(getDaemonAdapters())
+      return { sessions: owned.map(({ session }) => session), degraded: isDaemonDegraded() }
     }
   )
 
@@ -130,7 +125,7 @@ export function registerDaemonManagementHandlers(): void {
       const adapters = getDaemonAdapters()
       // Why: snapshot session IDs up front so mid-kill respawns aren't counted as "remaining".
       const initial = await collectSessions(adapters)
-      const initialIds = new Set(initial.map((s) => s.sessionId))
+      const initialIds = new Set(initial.map(({ session }) => session.sessionId))
       const initialCount = initial.length
 
       if (initialCount === 0) {
@@ -139,12 +134,7 @@ export function registerDaemonManagementHandlers(): void {
 
       // Why: no retry — session.kill() is idempotent and runs its own kill ladder; allSettled so one rejection doesn't abort the rest.
       await Promise.allSettled(
-        initial.map(async (session) => {
-          // Why: assumes PROTOCOL_VERSION stays distinct from PREVIOUS_DAEMON_PROTOCOL_VERSIONS (types.ts), else legacy sessions misroute here.
-          const owner = adapters.find((a) => a.protocolVersion === session.protocolVersion)
-          if (!owner) {
-            return
-          }
+        initial.map(async ({ session, owner }) => {
           // Why: immediate=true only matters to legacy/future adapters; swallow rejections since remainingCount reports stuck sessions.
           await owner.shutdown(session.sessionId, { immediate: true }).catch(() => {})
         })
@@ -158,8 +148,8 @@ export function registerDaemonManagementHandlers(): void {
         const current = await collectSessions(adapters)
         remainingOriginalIds = new Set(
           current
-            .filter((session) => initialIds.has(session.sessionId))
-            .map((session) => session.sessionId)
+            .filter(({ session }) => initialIds.has(session.sessionId))
+            .map(({ session }) => session.sessionId)
         )
         remainingOriginalCount = remainingOriginalIds.size
         if (remainingOriginalCount === 0) {
@@ -186,16 +176,12 @@ export function registerDaemonManagementHandlers(): void {
       }
       const adapters = getDaemonAdapters()
       const sessions = await collectSessions(adapters)
-      const match = sessions.find((s) => s.sessionId === args.sessionId)
+      const match = sessions.find(({ session }) => session.sessionId === args.sessionId)
       if (!match) {
         return { success: false }
       }
-      const owner = adapters.find((a) => a.protocolVersion === match.protocolVersion)
-      if (!owner) {
-        return { success: false }
-      }
       try {
-        await owner.shutdown(args.sessionId, { immediate: true })
+        await match.owner.shutdown(args.sessionId, { immediate: true })
         return { success: true }
       } catch {
         return { success: false }

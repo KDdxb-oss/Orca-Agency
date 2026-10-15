@@ -15,11 +15,11 @@ import type { TerminalSlice, TerminalStoreGet, TerminalStoreSet } from './termin
 import { startTerminalTabProviderRetirement } from './terminal-tab-close-providers'
 import { commitTerminalSurfaceClose } from './terminal-surface-close-intent'
 import { omitUnverifiedPtyLossTabIds } from './terminal-unverified-pty-loss'
-import { pruneSessionGridTabOrder } from '../slices/session-grid-tab-order'
-import { pruneSessionGridHiddenTabIds } from '../slices/session-grid-hidden-tabs'
 import { removePaneKeysByTabPrefix } from '../slices/agent-status-pane-keyed-records'
 import { omitRecordKeys } from '../slices/worktrees/teardown/record-key-omission'
-import { completeClosedChatTab } from '@/lib/chat-sidebar-tab-close'
+import { deleteNativeChatComposerDraftsForTab } from '@/components/native-chat/native-chat-composer-draft-store'
+import { dropNativeChatPendingAttachmentsForTab } from '@/components/native-chat/native-chat-pending-attachment-cache'
+import { noteAgentLaunchPaneClosedByUser } from '@/lib/agent-launch-pane-closes'
 
 export function createTerminalTabCloseActions(
   set: TerminalStoreSet,
@@ -28,17 +28,9 @@ export function createTerminalTabCloseActions(
   return {
     closeTab: (tabId, opts) => {
       const closeReason = opts?.reason ?? 'user'
-      // Main owns the durable close; PTY exit only removes the renderer's tab.
+      // Why narrowed separately: main alone records a close for a process exit.
       const intentReason = closeReason === 'pty-exit' ? null : closeReason
       const retiresSession = intentReason !== null
-      if (closeReason === 'user') {
-        try {
-          completeClosedChatTab(get, tabId)
-        } catch (error) {
-          // Why: failed sidebar bookkeeping must not leave the terminal running after an explicit close.
-          console.error('[terminal-tab-close] Failed to save closed chat state', error)
-        }
-      }
       const retirementPlan =
         opts?.precomputedRetirementPlan?.tabId === tabId
           ? opts.precomputedRetirementPlan
@@ -69,6 +61,14 @@ export function createTerminalTabCloseActions(
           const closing = before.find((t) => t.id === tabId)
           if (closing) {
             closingWorktreeId = wId
+            // The user closing a launch tab whose agent is still starting: that close wins.
+            if (
+              closeReason === 'user' &&
+              closing.agentLaunchPane &&
+              !closing.agentLaunchPane.outcome
+            ) {
+              noteAgentLaunchPaneClosedByUser(tabId, closing.agentLaunchPane.leafId)
+            }
             // Why: capture the first-matched tab's snapshot for the Cmd+Shift+T reopen stack (see capturedSnapshot below).
             if (!closedTab) {
               closedTab = closing
@@ -175,11 +175,6 @@ export function createTerminalTabCloseActions(
           }
           nextTabBarOrderByWorktree[wId] = order.filter((entryId) => entryId !== tabId)
         }
-        // Why: the session grid's global order must not accumulate retired ids;
-        // same reason as tabBarOrderByWorktree above. Identity-guarded so an
-        // unrelated close does not trip the persisted-UI writer.
-        const nextSessionsGridTabOrder = pruneSessionGridTabOrder(s.sessionsGridTabOrder, tabId)
-        const nextHiddenTabIds = pruneSessionGridHiddenTabIds(s.sessionsGridHiddenTabIds, tabId)
         // Why: clean up unconsumed snapshot/cold-restore data (e.g. tab closed before TerminalPane mounted) to prevent unbounded store growth across restarts.
         let nextSnapshots = s.pendingSnapshotByPtyId
         let nextColdRestores = s.pendingColdRestoreByPtyId
@@ -224,12 +219,6 @@ export function createTerminalTabCloseActions(
           ...(nextUnreadTerminalTabs !== s.unreadTerminalTabs
             ? { unreadTerminalTabs: nextUnreadTerminalTabs }
             : {}),
-          ...(nextSessionsGridTabOrder !== s.sessionsGridTabOrder
-            ? { sessionsGridTabOrder: nextSessionsGridTabOrder }
-            : {}),
-          ...(nextHiddenTabIds !== s.sessionsGridHiddenTabIds
-            ? { sessionsGridHiddenTabIds: nextHiddenTabIds }
-            : {}),
           ...(nextUnreadTerminalPanes !== s.unreadTerminalPanes
             ? { unreadTerminalPanes: nextUnreadTerminalPanes }
             : {}),
@@ -272,6 +261,12 @@ export function createTerminalTabCloseActions(
       if (intentReason && closingWorktreeId && opts?.remoteCloseOwnedByHost !== true) {
         commitTerminalSurfaceClose(closingWorktreeId, { kind: 'tab', tabId }, intentReason)
       }
+      // Why only a user close: it is the explicit abandon. Other closes keep the drafts until their
+      // workspace is removed in Orca; drafts have no budget that retires them.
+      if (closeReason === 'user') {
+        deleteNativeChatComposerDraftsForTab(tabId)
+        dropNativeChatPendingAttachmentsForTab(tabId)
+      }
       // Why shared with the paired snapshot apply: every path that removes a tab owes it the same sweep, and a second copy of the list is how one path silently misses a new entry.
       sweepRetiredTerminalTabState(get(), tabId, closingWorktreeId)
       for (const tabs of Object.values(get().unifiedTabsByWorktree)) {
@@ -281,7 +276,6 @@ export function createTerminalTabCloseActions(
         if (workspaceItem) {
           get().closeUnifiedTab(workspaceItem.id, {
             recordInteraction: opts?.recordInteraction,
-            preserveWorktreeSelection: closeReason !== 'user',
             terminalRetirementHandled: true
           })
         }

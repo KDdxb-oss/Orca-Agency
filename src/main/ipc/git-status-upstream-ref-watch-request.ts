@@ -13,6 +13,8 @@ import {
 } from './local-worktree-runtime-options'
 import { setWorktreeGitStatusRefWatch } from './worktree-base-directory-watcher'
 import type { GitStatusRefBindingRequest } from './worktree-git-status-ref-watch'
+import { isFolderRepo } from '../../shared/repo-kind'
+import { isRegisteredSshFolderStatus } from './registered-ssh-folder-status'
 
 export type GitStatusUpstreamRefWatchRequest = Omit<
   GitStatusRefBindingRequest,
@@ -40,6 +42,9 @@ export function applyGitStatusUpstreamRefWatchRequest(
       }
       const signal = boundedSignal(bindingSignal)
       if (args.connectionId) {
+        if (isRegisteredSshFolderStatus(store, args.worktreePath, args.connectionId)) {
+          return undefined
+        }
         const provider = getSshGitProvider(args.connectionId)
         if (!provider) {
           throw new Error(SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE)
@@ -59,6 +64,9 @@ export function applyGitStatusUpstreamRefWatchRequest(
 
       const worktreePath = await resolveRegisteredWorktreePath(args.worktreePath, store)
       const repo = getLocalRepoForRegisteredWorktree(store, args.worktreePath, worktreePath)
+      if (repo && isFolderRepo(repo)) {
+        return undefined
+      }
       const gitOptions = getLocalGitOptionsForRepo(store, repo)
       return resolveGitStatusUpstreamRef(
         (gitArgs, cwd, requestSignal) =>

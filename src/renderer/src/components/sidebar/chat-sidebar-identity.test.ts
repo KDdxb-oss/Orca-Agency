@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 import { chatSidebarPreferencePatch, isChatCompleted } from './chat-sidebar-identity'
+import { buildChatSidebarRows } from './chat-sidebar-rows'
 import { activeChatTarget, isChatRowSelected } from './chat-sidebar-selection'
 import { chatFallbackId, chatSessionKey } from './chat-sidebar-types'
-import { chatRow, chatSession, chatWorktree } from './chat-sidebar-test-fixtures'
+import { chatRow, chatSession, chatState, chatWorktree } from './chat-sidebar-test-fixtures'
 import { chatSessionSnapshot, chatSnapshotSessions } from './chat-sidebar-session-snapshot'
 
 const key = chatSessionKey('local', 'codex', 'session-a')
@@ -59,7 +60,7 @@ describe('chat sidebar preferences', () => {
     expect(moved?.sessions?.[key]).toEqual({ worktreeId: 'other' })
   })
 
-  it('reopens a title-only chat on a later working turn and keeps it done during the marked one', () => {
+  it('keeps a title-only chat Done until a new turn is proven', () => {
     const titleRow = chatRow({
       id: fallback,
       sessionKey: null,
@@ -67,10 +68,15 @@ describe('chat sidebar preferences', () => {
       turnStartedAt: 1
     })
     const markedIdle = { [fallback]: { activityAt: 1, at: 5 } }
-    expect(isChatCompleted({ ...titleRow, state: 'working' }, markedIdle[fallback])).toBe(false)
+    expect(isChatCompleted({ ...titleRow, state: 'working' }, markedIdle[fallback])).toBe(true)
     expect(
       chatSidebarPreferencePatch([{ ...titleRow, state: 'working' }], { completed: markedIdle }, 9)
-    ).toEqual({ completed: { [fallback]: { activityAt: 1, at: 9, done: false } } })
+    ).toBeNull()
+    const prompted = { ...titleRow, state: 'working' as const, turnStartedAt: 9 }
+    expect(isChatCompleted(prompted, markedIdle[fallback])).toBe(false)
+    expect(chatSidebarPreferencePatch([prompted], { completed: markedIdle }, 9)).toEqual({
+      completed: { [fallback]: { activityAt: 1, at: 5, done: false, closedTabId: undefined } }
+    })
 
     const markedWorking = { [fallback]: { activityAt: 1, at: 5, working: true } }
     expect(isChatCompleted({ ...titleRow, state: 'working' }, markedWorking[fallback])).toBe(true)
@@ -101,6 +107,41 @@ describe('chat sidebar preferences', () => {
 })
 
 describe('chat sidebar session snapshots', () => {
+  it('upgrades old headless snapshots after scanning and restores later interactive chats', () => {
+    const headless = chatSession('session-headless', { agent: 'claude', isHeadless: true })
+    const sessionKey = chatSessionKey('local', 'claude', headless.sessionId)
+    const snapshot = chatSessionSnapshot({ ...headless, isHeadless: undefined })
+    const current = { sessions: { [sessionKey]: { worktreeId: chatWorktree.id, snapshot } } }
+    const classified = chatSidebarPreferencePatch([], current, 10, {
+      scannedSessions: [headless]
+    })
+    expect(classified?.sessions?.[sessionKey].snapshot?.isHeadless).toBe(true)
+    const state = chatState()
+    state.settings!.chatSidebar = { historySince: 0, sessions: classified?.sessions }
+    expect(buildChatSidebarRows(state, [], 10)).toEqual([])
+    const interactive = { ...headless, isHeadless: undefined }
+    const restored = chatSidebarPreferencePatch([], { sessions: classified?.sessions }, 20, {
+      scannedSessions: [interactive]
+    })
+    expect(restored?.sessions?.[sessionKey].snapshot?.isHeadless).toBeUndefined()
+  })
+
+  it('leaves an older remote Claude scan unclassified', () => {
+    const session = chatSession('remote-session', {
+      agent: 'claude',
+      executionHostId: 'ssh:older-server'
+    })
+    const sessionKey = chatSessionKey(session.executionHostId, 'claude', session.sessionId)
+    const current = {
+      sessions: {
+        [sessionKey]: { worktreeId: chatWorktree.id, snapshot: chatSessionSnapshot(session) }
+      }
+    }
+    const patch = chatSidebarPreferencePatch([], current, 10, { scannedSessions: [session] })
+    expect(patch).toBeNull()
+    expect(current.sessions[sessionKey].snapshot.isHeadless).toBeUndefined()
+  })
+
   it('remembers a scanned session and does not rewrite an unchanged snapshot', () => {
     const session = chatSession('session-a')
     const patch = chatSidebarPreferencePatch([chatRow({ session })], {}, 10)

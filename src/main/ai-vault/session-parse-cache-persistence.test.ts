@@ -140,9 +140,8 @@ async function coldParseStats(path: string): Promise<SessionParseStats> {
  *
  * This table is the reminder. Changing the persisted session shape — or the
  * meaning of a field the parsers fill — breaks this `satisfies` and the fix
- * is to bump `SCHEMA_VERSION` in session-parse-cache-persistence.ts. Schema 5
- * migrates small zero-turn Claude launchers from schemas 3/4 while reusing
- * large conversations.
+ * is to bump `SCHEMA_VERSION` in session-parse-cache-persistence.ts. Schema 6
+ * reparses older Claude sessions to classify headless transcripts.
  */
 const CACHED_SESSION_FIELDS = {
   id: true,
@@ -162,9 +161,11 @@ const CACHED_SESSION_FIELDS = {
   messageCount: true,
   totalTokens: true,
   previewMessages: true,
+  isHeadless: true,
   resumedSessionIdPrefix: true,
   lastHumanTurnAt: true,
   previewMessagesTruncated: true,
+  antigravityOpeningPrompt: true,
   firstUserPrompt: true,
   lastUserPrompt: true,
   queuedMessageCount: true,
@@ -268,7 +269,7 @@ describe('session parse cache persistence', () => {
     expect(stats.reused).toBe(0)
   })
 
-  it('invalidates old Codex activity caches while keeping Claude caches reusable', async () => {
+  it('invalidates old Codex activity and Claude entrypoint caches', async () => {
     const root = await makeTempDir()
     const cacheFile = join(root, 'session-parse-cache.json')
     initSessionParseCachePersistence({ filePath: cacheFile, appVersion: APP_VERSION })
@@ -287,10 +288,10 @@ describe('session parse cache persistence', () => {
     simulateRestart(cacheFile)
     await ensureSessionParseCacheLoaded()
     expect(getSessionParseCacheEntry(codexPath)).toBeUndefined()
-    expect((await coldParseStats(transcript)).reused).toBe(1)
+    expect((await coldParseStats(transcript)).fullParses).toBe(1)
   })
 
-  it('reparses cached zero-turn Claude launchers while reusing large conversations', async () => {
+  it('reparses older Claude caches to classify headless transcripts', async () => {
     const root = await makeTempDir()
     const cacheFile = join(root, 'session-parse-cache.json')
     const transcript = await writeTranscript(root)
@@ -323,7 +324,7 @@ describe('session parse cache persistence', () => {
         ] satisfies [string, PersistedSessionParseCacheEntry]
     )
 
-    for (const schemaVersion of [3, 4]) {
+    for (const schemaVersion of [3, 4, 5]) {
       await writeFile(
         cacheFile,
         JSON.stringify({ schemaVersion, appVersion: APP_VERSION, entries: oldCache })
@@ -331,7 +332,7 @@ describe('session parse cache persistence', () => {
       simulateRestart(cacheFile)
       await ensureSessionParseCacheLoaded()
       expect(getSessionParseCacheEntry(launcherPath)).toBeUndefined()
-      expect(getSessionParseCacheEntry(transcript)).toBeDefined()
+      expect(getSessionParseCacheEntry(transcript)).toBeUndefined()
 
       const launcherStats = createSessionParseStats()
       const parsed = await parseAgentSessionFileCached(launcher, process.platform, launcherStats)
@@ -339,15 +340,14 @@ describe('session parse cache persistence', () => {
       expect(parsed?.resumedSessionIdPrefix).toBe('170dd324')
       const conversationStats = createSessionParseStats()
       await parseAgentSessionFileCached(conversation, process.platform, conversationStats)
-      expect(conversationStats.reused).toBe(1)
-      expect(conversationStats.bytesRead).toBe(0)
-      if (schemaVersion === 4) {
+      expect(conversationStats.fullParses).toBe(1)
+      if (schemaVersion === 5) {
         scheduleSessionParseCachePersist(launcherStats)
         await flushSessionParseCachePersistForTests()
       }
     }
 
-    expect(JSON.parse(await readFile(cacheFile, 'utf8')).schemaVersion).toBe(5)
+    expect(JSON.parse(await readFile(cacheFile, 'utf8')).schemaVersion).toBe(6)
     simulateRestart(cacheFile)
     await ensureSessionParseCacheLoaded()
     const launcherReuse = createSessionParseStats()

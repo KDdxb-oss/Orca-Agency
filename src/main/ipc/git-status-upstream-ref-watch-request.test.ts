@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   resolveRegisteredPath: vi.fn(),
   getLocalRepo: vi.fn(),
   getLocalOptions: vi.fn(),
+  isSshFolder: vi.fn(),
   setWatch: vi.fn()
 }))
 
@@ -27,6 +28,9 @@ vi.mock('./local-worktree-runtime-options', () => ({
 vi.mock('./worktree-base-directory-watcher', () => ({
   setWorktreeGitStatusRefWatch: mocks.setWatch
 }))
+vi.mock('./registered-ssh-folder-status', () => ({
+  isRegisteredSshFolderStatus: mocks.isSshFolder
+}))
 
 import { applyGitStatusUpstreamRefWatchRequest } from './git-status-upstream-ref-watch-request'
 
@@ -36,10 +40,38 @@ describe('applyGitStatusUpstreamRefWatchRequest', () => {
     mocks.getProviderGeneration.mockReturnValue(0)
     mocks.resolveRegisteredPath.mockResolvedValue('/resolved/repo')
     mocks.getLocalOptions.mockReturnValue({})
+    mocks.getLocalRepo.mockReturnValue(undefined)
+    mocks.isSshFolder.mockReturnValue(false)
     mocks.setWatch.mockImplementation(
       async (_args: unknown, resolve: (signal: AbortSignal) => Promise<string | undefined>) =>
         resolve(new AbortController().signal)
     )
+  })
+
+  it('skips stale upstream references for a local folder without invoking Git', async () => {
+    mocks.getLocalRepo.mockReturnValue({ kind: 'folder' })
+    await applyGitStatusUpstreamRefWatchRequest({} as Store, {
+      worktreeId: 'folder::/repo',
+      worktreePath: '/repo',
+      executionHostId: 'local',
+      branch: 'main',
+      upstreamName: 'origin/main'
+    })
+    expect(mocks.gitExec).not.toHaveBeenCalled()
+  })
+
+  it('skips stale upstream references for a registered SSH folder without requesting a provider', async () => {
+    mocks.isSshFolder.mockReturnValue(true)
+    await applyGitStatusUpstreamRefWatchRequest({} as Store, {
+      worktreeId: 'folder::/repo',
+      worktreePath: '/repo',
+      executionHostId: 'ssh:ssh-1',
+      connectionId: 'ssh-1',
+      branch: 'main',
+      upstreamName: 'origin/main'
+    })
+    expect(mocks.getProvider).not.toHaveBeenCalled()
+    expect(mocks.gitExec).not.toHaveBeenCalled()
   })
 
   it('routes local exact resolution through the registered worktree runtime', async () => {

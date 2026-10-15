@@ -24,6 +24,8 @@ export type ChatSidebarSessionSnapshot = {
   createdAt: string | null
   updatedAt: string | null
   modifiedAt: string
+  /** Present after an exact Claude transcript was classified. */
+  isHeadless?: boolean
   /** Latest real Claude prompt timestamp retained across no-history restarts. */
   lastHumanTurnAt?: string
   /** Host-built resume command; only remote hosts need it. */
@@ -53,6 +55,11 @@ export type ChatSidebarSessionEntry = {
 export type ChatSidebarSettings = {
   view?: 'chats' | 'workspaces'
   groupBy?: 'recent' | 'status' | 'folder'
+  showOnlyInProgress?: boolean
+  showOnlyOpenChats?: boolean
+  collapseDoneFolders?: boolean
+  /** Folder headings manually expanded while automatic Done-folder collapse is enabled. */
+  expandedDoneFolders?: string[]
   /** Unchecked folder labels; new folders remain visible by default. */
   hiddenFolders?: string[]
   /** Automation-owned tab/pane and provider identities; retained after run cleanup. */

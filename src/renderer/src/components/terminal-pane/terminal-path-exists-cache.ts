@@ -1,14 +1,14 @@
 export const TERMINAL_PATH_EXISTS_CACHE_MAX_ENTRIES = 1024
 const CONTEXT_PROOF_MAX_AGE_MS = 5000
-const checkedAtByCache = new WeakMap<Map<string, boolean>, Map<string, number>>()
+const checkedAtByCache = new WeakMap<object, Map<string, number>>()
 
 export function wasTerminalPathExistsCacheRecentlyProbed(
   cache: Map<string, boolean> | undefined,
   key: string
 ): boolean {
   const checkedAt = cache && checkedAtByCache.get(cache)?.get(key)
-  return (
-    cache !== undefined &&
+  return Boolean(
+    cache &&
     checkedAt !== undefined &&
     cache.has(key) &&
     Date.now() - checkedAt <= CONTEXT_PROOF_MAX_AGE_MS
@@ -39,10 +39,7 @@ export function getTerminalPathExistsCacheKey({
   return `${runtimeId || 'active'}\0${absolutePath}`
 }
 
-export function readTerminalPathExistsCache(
-  cache: Map<string, boolean>,
-  key: string
-): boolean | undefined {
+export function readTerminalPathExistsCache<T>(cache: Map<string, T>, key: string): T | undefined {
   const value = cache.get(key)
   if (value !== undefined) {
     cache.delete(key)
@@ -51,10 +48,10 @@ export function readTerminalPathExistsCache(
   return value
 }
 
-export function writeTerminalPathExistsCache(
-  cache: Map<string, boolean>,
+export function writeTerminalPathExistsCache<T>(
+  cache: Map<string, T>,
   key: string,
-  exists: boolean
+  value: T
 ): void {
   if (cache.size === 0) {
     checkedAtByCache.get(cache)?.clear()
@@ -73,7 +70,7 @@ export function writeTerminalPathExistsCache(
       checkedAtByCache.get(cache)?.delete(oldestKey)
     }
   }
-  cache.set(key, exists)
+  cache.set(key, value)
   let checkedAt = checkedAtByCache.get(cache)
   if (!checkedAt) {
     checkedAt = new Map()

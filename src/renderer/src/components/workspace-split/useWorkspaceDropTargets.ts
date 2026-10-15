@@ -15,13 +15,28 @@ import {
   WORKSPACE_PANE_POINTER_MOVE,
   readWorkspacePanePointerDetail
 } from './workspace-pane-pointer-drag'
-import { workspaceDropTarget } from './workspace-drop-target'
+import { workspaceDropSurface } from './workspace-drop-surface'
+import { workspacePaneDropTarget } from './workspace-pane-drop-target'
+import type { WorkspacePanePlacement } from '@/lib/workspace-pane-placement'
+import {
+  workspaceTabStripDropTarget,
+  workspaceForeignTabStripAtPoint,
+  dropTerminalTabIntoWorkspaceStrip,
+  type WorkspaceTabStripDrop
+} from './workspace-tab-strip-drop'
 import {
   canDropTerminalTabAtWorkspaceEdge,
   dropTerminalTabAtWorkspaceEdge
 } from './workspace-tab-edge-drop'
+import { captureNativeWorkspaceDragSource } from './workspace-native-drag-source'
 
-export type WorkspaceDropHover = { id: string; edge: WorkspaceSplitEdge; wholeWindow: boolean }
+export type WorkspaceDropHover = {
+  id: string
+  edge: WorkspaceSplitEdge
+  wholeWindow: boolean
+  placement?: WorkspacePanePlacement
+  strip?: WorkspaceTabStripDrop
+}
 
 export function useWorkspaceDropTargets(
   rootRef: RefObject<HTMLDivElement | null>,
@@ -35,51 +50,36 @@ export function useWorkspaceDropTargets(
       return
     }
     const ids = new Set(visibleIdsKey.split('\u0000').filter(Boolean))
-    const dropTarget = (surface: HTMLElement, x: number, y: number) => ({
+    const nativeDrag = captureNativeWorkspaceDragSource()
+    const dropTarget = (
+      surface: HTMLElement,
+      x: number,
+      y: number,
+      sourceId?: string,
+      unifiedTabId?: string
+    ) => ({
       id: surface.dataset.workspaceSurfaceId!,
-      ...workspaceDropTarget(
+      ...workspacePaneDropTarget(
         root.getBoundingClientRect(),
         surface.getBoundingClientRect(),
         x,
         y,
-        ids.size > 1
+        ids.size +
+          (sourceId &&
+          (!ids.has(sourceId) ||
+            (unifiedTabId && (useAppStore.getState().tabsByWorktree[sourceId]?.length ?? 0) > 1))
+            ? 1
+            : 0),
+        Boolean(
+          sourceId &&
+          ids.has(sourceId) &&
+          sourceId !== surface.dataset.workspaceSurfaceId &&
+          (!unifiedTabId || (useAppStore.getState().tabsByWorktree[sourceId]?.length ?? 0) <= 1)
+        )
       )
     })
-    const surfaceAtPoint = (element: Element | null, x: number, y: number): HTMLElement | null => {
-      const surface = element?.closest<HTMLElement>('[data-workspace-surface-id]')
-      if (surface && root.contains(surface) && ids.has(surface.dataset.workspaceSurfaceId ?? '')) {
-        return surface
-      }
-      const bounds = root.getBoundingClientRect()
-      // The split divider reaches the outer edge but belongs to neither pane.
-      // Keep full-window drops available there without accepting interior gaps.
-      if (
-        !element ||
-        !root.contains(element) ||
-        !workspaceDropTarget(bounds, bounds, x, y, ids.size > 1).wholeWindow
-      ) {
-        return null
-      }
-      let nearest: HTMLElement | null = null
-      let distance = Infinity
-      for (const candidate of root.querySelectorAll<HTMLElement>('[data-workspace-surface-id]')) {
-        const rect = candidate.getBoundingClientRect()
-        if (
-          !ids.has(candidate.dataset.workspaceSurfaceId ?? '') ||
-          rect.width <= 0 ||
-          rect.height <= 0
-        ) {
-          continue
-        }
-        const next =
-          Math.max(rect.left - x, 0, x - rect.right) + Math.max(rect.top - y, 0, y - rect.bottom)
-        if (next < distance) {
-          nearest = candidate
-          distance = next
-        }
-      }
-      return nearest
-    }
+    const surfaceAtPoint = (element: Element | null, x: number, y: number) =>
+      workspaceDropSurface(root, ids, element, x, y)
     const targetSurface = (event: DragEvent): HTMLElement | null =>
       Array.from(event.dataTransfer?.types ?? []).includes(WORKSPACE_STATUS_DRAG_TYPE)
         ? surfaceAtPoint(
@@ -93,11 +93,11 @@ export function useWorkspaceDropTargets(
     }
     const overSourceTabStrip = (sourceId: string, surface: HTMLElement, x: number, y: number) =>
       surface.dataset.workspaceSurfaceId === sourceId &&
-      Boolean(document.elementFromPoint(x, y)?.closest('[data-tab-group-strip-id] [data-tab-id]'))
+      Boolean(document.elementFromPoint(x, y)?.closest('[data-tab-group-strip-id]'))
     const placeWorkspace = (sourceId: string, surface: HTMLElement, x: number, y: number) => {
       const targetId = surface.dataset.workspaceSurfaceId!
-      const target = dropTarget(surface, x, y)
-      if (sourceId === targetId && !target.wholeWindow) {
+      const target = dropTarget(surface, x, y, sourceId)
+      if (sourceId === targetId && !target.wholeWindow && !target.placement) {
         return
       }
       const state = useAppStore.getState()
@@ -111,9 +111,13 @@ export function useWorkspaceDropTargets(
         return
       }
       if (activateAndRevealWorkspace(sourceId, { revealInSidebar: false }) !== false) {
-        useAppStore
-          .getState()
-          .placeWorkspaceAtEdge(sourceId, targetId, target.edge, target.wholeWindow)
+        if (target.placement) {
+          useAppStore.getState().placeWorkspacePane(sourceId, targetId, target.placement)
+        } else {
+          useAppStore
+            .getState()
+            .placeWorkspaceAtEdge(sourceId, targetId, target.edge, target.wholeWindow)
+        }
       }
     }
     const onDragOver = (event: DragEvent) => {
@@ -124,11 +128,18 @@ export function useWorkspaceDropTargets(
       }
       event.preventDefault()
       event.dataTransfer.dropEffect = 'move'
-      const next = dropTarget(surface, event.clientX, event.clientY)
+      const next = dropTarget(
+        surface,
+        event.clientX,
+        event.clientY,
+        nativeDrag.sourceId() ?? readWorkspaceDragData(event.dataTransfer) ?? undefined
+      )
       setHover((previous) =>
         previous?.id === next.id &&
         previous.edge === next.edge &&
-        previous.wholeWindow === next.wholeWindow
+        previous.wholeWindow === next.wholeWindow &&
+        JSON.stringify(previous.placement) === JSON.stringify(next.placement) &&
+        !previous.strip
           ? previous
           : next
       )
@@ -154,6 +165,19 @@ export function useWorkspaceDropTargets(
         return
       }
       const { sourceId, x, y } = detail
+      const strip = detail.unifiedTabId
+        ? workspaceTabStripDropTarget(sourceId, detail.unifiedTabId, x, y)
+        : null
+      if (strip) {
+        event.preventDefault()
+        setHover({ id: strip.targetId, edge: 'top', wholeWindow: false, strip })
+        return
+      }
+      if (detail.unifiedTabId && workspaceForeignTabStripAtPoint(sourceId, x, y)) {
+        event.preventDefault()
+        setHover(null)
+        return
+      }
       if (
         detail.unifiedTabId &&
         !canDropTerminalTabAtWorkspaceEdge(sourceId, detail.unifiedTabId)
@@ -166,8 +190,8 @@ export function useWorkspaceDropTargets(
         setHover(null)
         return
       }
-      const next = dropTarget(surface, x, y)
-      if (next.id === sourceId && !next.wholeWindow) {
+      const next = dropTarget(surface, x, y, sourceId, detail.unifiedTabId)
+      if (next.id === sourceId && !next.wholeWindow && !next.placement) {
         setHover(null)
         return
       }
@@ -175,7 +199,9 @@ export function useWorkspaceDropTargets(
       setHover((previous) =>
         previous?.id === next.id &&
         previous.edge === next.edge &&
-        previous.wholeWindow === next.wholeWindow
+        previous.wholeWindow === next.wholeWindow &&
+        JSON.stringify(previous.placement) === JSON.stringify(next.placement) &&
+        !previous.strip
           ? previous
           : next
       )
@@ -186,6 +212,23 @@ export function useWorkspaceDropTargets(
         return
       }
       const { sourceId, x, y } = detail
+      const strip = detail.unifiedTabId
+        ? workspaceTabStripDropTarget(sourceId, detail.unifiedTabId, x, y)
+        : null
+      if (strip && detail.unifiedTabId) {
+        event.preventDefault()
+        setHover(null)
+        void dropTerminalTabIntoWorkspaceStrip(sourceId, detail.unifiedTabId, strip).catch(
+          (error: unknown) =>
+            toast.error(error instanceof Error ? error.message : 'Could not combine chats.')
+        )
+        return
+      }
+      if (detail.unifiedTabId && workspaceForeignTabStripAtPoint(sourceId, x, y)) {
+        event.preventDefault()
+        setHover(null)
+        return
+      }
       if (
         detail.unifiedTabId &&
         !canDropTerminalTabAtWorkspaceEdge(sourceId, detail.unifiedTabId)
@@ -198,8 +241,8 @@ export function useWorkspaceDropTargets(
       if (!surface || (detail.unifiedTabId && overSourceTabStrip(sourceId, surface, x, y))) {
         return
       }
-      const target = dropTarget(surface, x, y)
-      if (target.id === sourceId && !target.wholeWindow) {
+      const target = dropTarget(surface, x, y, sourceId, detail.unifiedTabId)
+      if (target.id === sourceId && !target.wholeWindow && !target.placement) {
         return
       }
       event.preventDefault()
@@ -209,7 +252,8 @@ export function useWorkspaceDropTargets(
           unifiedTabId: detail.unifiedTabId,
           targetId: target.id,
           edge: target.edge,
-          wholeWindow: target.wholeWindow
+          wholeWindow: target.wholeWindow,
+          placement: target.placement
         }).catch((error: unknown) =>
           toast.error(error instanceof Error ? error.message : 'Could not move chat.')
         )
@@ -225,6 +269,7 @@ export function useWorkspaceDropTargets(
     document.addEventListener(WORKSPACE_PANE_POINTER_DROP, onPointerDrop)
     document.addEventListener(WORKSPACE_PANE_POINTER_CLEAR, onPointerClear)
     return () => {
+      nativeDrag.dispose()
       document.removeEventListener('dragover', onDragOver, true)
       document.removeEventListener('drop', onDrop, true)
       document.removeEventListener('dragend', onDragEnd, true)

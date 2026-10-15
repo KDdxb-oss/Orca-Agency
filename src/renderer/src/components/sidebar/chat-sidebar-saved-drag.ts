@@ -168,9 +168,12 @@ export async function resumeSavedChatAtDrop(
     toast.error(`A split can contain up to ${MAX_WORKSPACE_PANES} workspaces`)
     return
   }
-  const workspace = await createSeparateChatWorkspace(row)
+  const workspace = await createSeparateChatWorkspace(row, { useSourceWhenUngrouped: true })
+  const createdWorkspace = workspace.id !== row.worktree.id
   if (!destinationExists() || moveExisting()) {
-    await discardEmptyChatWorkspace(workspace)
+    if (createdWorkspace) {
+      await discardEmptyChatWorkspace(workspace)
+    }
     return
   }
   sourceId = workspace.id
@@ -179,7 +182,7 @@ export async function resumeSavedChatAtDrop(
     onResumed: placeWorkspace,
     validateDestination: destinationExists,
     onSettled: (outcome) => {
-      if (outcome === 'not-created') {
+      if (createdWorkspace && outcome === 'not-created') {
         void discardEmptyChatWorkspace(workspace).catch(() => {})
       }
     }

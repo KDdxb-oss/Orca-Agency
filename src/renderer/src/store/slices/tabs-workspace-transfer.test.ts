@@ -39,6 +39,7 @@ describe('moving a live chat out of its workspace', () => {
     expect(after.tabsByWorktree[target][0].aiVaultTitle).toEqual(
       before.tabsByWorktree[source][0].aiVaultTitle
     )
+    expect(after.tabsByWorktree[target][0].workspaceMoveRevision).toBe(1)
     expect(after.ptyIdsByTabId).toBe(before.ptyIdsByTabId)
     expect(after.terminalLayoutsByTabId).toBe(before.terminalLayoutsByTabId)
     expect(after.pendingReconnectTabByWorktree).toMatchObject({
@@ -53,7 +54,14 @@ describe('moving a live chat out of its workspace', () => {
     })
   })
 
-  it('refuses to replace destination tabs or move between execution hosts', () => {
+  it('refuses to combine tabs from different folders', () => {
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [source, target].map((id) =>
+          makeWorktree({ id, repoId: 'repo1', hostId: 'local', path: `/tmp/${id}` })
+        )
+      }
+    })
     const tab = store.getState().createTab(source)
     const unified = store.getState().unifiedTabsByWorktree[source][0]
     store.getState().createTab(target)
@@ -61,6 +69,65 @@ describe('moving a live chat out of its workspace', () => {
     expect(before.moveTerminalTabToWorkspace(unified.id, target)).toBe(false)
     expect(store.getState()).toBe(before)
     expect(store.getState().tabsByWorktree[source][0].id).toBe(tab.id)
+  })
+
+  it('inserts a detached tab into an occupied same-folder bar without replacing sessions', () => {
+    const sourcePath = store.getState().getKnownWorktreeById(source, 'local')!.path
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [source, target].map((id) =>
+          makeWorktree({ id, repoId: 'repo1', hostId: 'local', path: sourcePath })
+        )
+      }
+    })
+    const review = store.getState().createTab(source)
+    const anthony = store.getState().createTab(target)
+    store.getState().setAiVaultTabTitle(review.id, {
+      agent: 'codex',
+      sessionId: 'same-provider-session',
+      title: 'Review'
+    })
+    const before = store.getState()
+    const unified = before.unifiedTabsByWorktree[source][0]
+    const targetGroup = before.groupsByWorktree[target][0]
+    const layouts = before.terminalLayoutsByTabId
+    expect(
+      before.moveTerminalTabToWorkspace(unified.id, target, { groupId: targetGroup.id, index: 0 })
+    ).toBe(true)
+    const after = store.getState()
+    expect(after.tabsByWorktree[target].map((tab) => tab.id)).toEqual([review.id, anthony.id])
+    expect(after.groupsByWorktree[target][0].tabOrder).toEqual([
+      unified.id,
+      before.unifiedTabsByWorktree[target][0].id
+    ])
+    expect(after.tabsByWorktree[target][0].aiVaultTitle?.sessionId).toBe('same-provider-session')
+    expect(after.tabBarOrderByWorktree[target]).toEqual([review.id, anthony.id])
+    expect(after.unifiedTabsByWorktree[target].map((tab) => tab.sortOrder)).toEqual([0, 1])
+    expect(after.terminalLayoutsByTabId).toBe(layouts)
+    expect(after.tabsByWorktree[source]).toEqual([])
+  })
+
+  it('rejects a remote destination even when the folder path matches', () => {
+    store.getState().createTab(source)
+    const unified = store.getState().unifiedTabsByWorktree[source][0]
+    store.setState({
+      repos: [
+        ...store.getState().repos,
+        {
+          ...store.getState().repos[0],
+          id: 'remote',
+          connectionId: 'other',
+          executionHostId: 'ssh:other'
+        }
+      ],
+      worktreesByRepo: {
+        repo1: [makeWorktree({ id: source, repoId: 'repo1', hostId: 'local' })],
+        remote: [makeWorktree({ id: target, repoId: 'remote', hostId: 'ssh:other' })]
+      }
+    })
+    const before = store.getState()
+    expect(before.moveTerminalTabToWorkspace(unified.id, target)).toBe(false)
+    expect(store.getState()).toBe(before)
   })
 
   it('rejects remote-owned tabs without modifying their process or host state', () => {

@@ -11,7 +11,7 @@ import type { SectionAppendContext } from './group-sections'
 import type { OrderedGroupEntry } from './project-grouping'
 import {
   compareRecentRank,
-  recentRankForEntry,
+  createRecentRankLookup,
   withRepoSectionDisplayLabels
 } from './section-order'
 import { buildFolderWorkspaceRow } from './row-builders'
@@ -28,6 +28,7 @@ export function appendProjectGroupSections(
 ): void {
   const { orderedGroups, projectGroups, folderWorkspaces, projectOrderBy, repoOrder } = args
   const { result, collapsedGroups } = ctx
+  const recentRankForEntry = createRecentRankLookup()
 
   const groupByProjectGroupId = new Map<string | null, OrderedGroupEntry[]>()
   for (const entry of orderedGroups) {
@@ -40,6 +41,9 @@ export function appendProjectGroupSections(
 
   const sortRepoEntriesWithinGroup = (entries: OrderedGroupEntry[]): OrderedGroupEntry[] => {
     if (projectOrderBy === 'recent') {
+      if (entries.length < 2) {
+        return [...entries]
+      }
       return [...entries].sort((left, right) =>
         compareRecentRank(recentRankForEntry(left), recentRankForEntry(right))
       )

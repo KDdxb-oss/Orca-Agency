@@ -19,10 +19,9 @@ import type { TerminalPasteTextOptions } from './terminal-paste-model'
  * A verified Windows input-record agent cannot receive paste frames; for that explicit
  * capability, use the same modified-Enter newline contract as Shift+Enter.
  *
- * Why this diverges from terminal-ctrl-enter / terminal-windows-shift-enter, which veto
- * on shellForeground/routingRevoked and require routingTrusted: those resolvers decide
- * where to ROUTE input bytes, so a forged identity misdelivers keystrokes. This one only
- * decides how to encode a user-requested paste, whose ESC bytes are sanitized downstream.
+ * Why the Windows input-record path needs process evidence: ESC CR is a newline in
+ * Codex but can submit a command in cmd.exe. A hook row may outlive Codex, so it is
+ * sufficient for bracket protection but not for modified-Enter encoding.
  */
 export function resolveProtectedMultilinePasteOptionsForPane({
   isWindowsClient,
@@ -52,7 +51,7 @@ export function resolveProtectedMultilinePasteOptionsForPane({
   return resolveProtectedMultilinePasteOptionsForAgentEvidence({
     isWindowsClient,
     hostPlatform,
-    foregroundAgent: paneForegroundAgentByPaneKey[paneKey]?.agent,
+    foreground: paneForegroundAgentByPaneKey[paneKey],
     entry: agentStatusByPaneKey[paneKey]
   })
 }
@@ -60,31 +59,38 @@ export function resolveProtectedMultilinePasteOptionsForPane({
 export function resolveProtectedMultilinePasteOptionsForAgentEvidence({
   isWindowsClient,
   hostPlatform,
-  foregroundAgent,
+  foreground,
   entry
 }: {
   isWindowsClient: boolean
   hostPlatform: NodeJS.Platform
-  foregroundAgent: unknown
+  foreground: PaneForegroundAgentEntry | undefined
   entry: AgentStatusEntry | undefined
 }): TerminalPasteTextOptions | undefined {
   // Why: a row rehydrated from disk across a restart describes the previous process,
   // not the shell now attached to this pane.
-  const agent = isTuiAgent(foregroundAgent)
-    ? foregroundAgent
+  const agent = isTuiAgent(foreground?.agent)
+    ? foreground.agent
     : entry?.restoredUnconfirmed !== true && isTuiAgent(entry?.agentType)
       ? entry.agentType
       : null
-  // Why NOT vetoed on shellForeground: that flag is republished only at OSC 133
+  // Why bracket protection is NOT vetoed on shellForeground: that flag is republished only at OSC 133
   // boundaries, so a shell without 133 integration leaves it latched true while an
   // agent owns the foreground. Vetoing on it silently reinstates the submit bug —
   // measured live. An idle agent also sits at `done` past the 30-minute freshness
   // TTL, so neither state nor TTL can gate this either. A false negative sends the
-  // user's parked draft; a false positive only changes encoding within this paste.
+  // user's parked draft. Modified-Enter encoding has a stricter rule below.
   const windowsInputRecordPasteNewline = agent
     ? TUI_AGENT_CONFIG[agent].windowsInputRecordPasteNewline
     : undefined
-  if (hostPlatform === 'win32' && windowsInputRecordPasteNewline) {
+  if (
+    hostPlatform === 'win32' &&
+    windowsInputRecordPasteNewline &&
+    foreground?.agent === agent &&
+    foreground.agentEvidence === 'process-read' &&
+    foreground.routingTrusted === true &&
+    foreground.routingRevoked !== true
+  ) {
     return {
       windowsInputRecordNewline: windowsInputRecordPasteNewline
     }

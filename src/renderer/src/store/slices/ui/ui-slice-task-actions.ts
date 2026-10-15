@@ -1,4 +1,5 @@
 import type { UISlice, UISliceGet, UISliceSet } from './ui-slice-contract'
+import { placeWorkspacePane } from '@/lib/workspace-pane-placement'
 import { findPrevLiveNonTaskStackHistoryIndex } from '../worktree-nav-history'
 import { hasFeatureInteraction } from '../../../../../shared/feature-interactions'
 import {
@@ -24,6 +25,18 @@ export function createUiTaskActions(set: UISliceSet, get: UISliceGet): Partial<U
   return {
     activeView: 'terminal',
     workspaceSplitGroups: readWorkspaceSplitGroups(),
+    placeWorkspacePane: (source, target, placement) =>
+      set((state) => {
+        const workspaceSplitGroups = placeWorkspacePane(
+          state.workspaceSplitGroups,
+          source,
+          target,
+          placement,
+          createBrowserUuid()
+        )
+        writeWorkspaceSplitGroups(workspaceSplitGroups)
+        return { workspaceSplitGroups }
+      }),
     placeWorkspaceAtEdge: (source, target, edge, wholeWindow) =>
       set((state) => {
         const workspaceSplitGroups = placeWorkspaceAtEdge(

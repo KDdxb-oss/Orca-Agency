@@ -21,6 +21,7 @@ import { recordUpdaterLifecycle } from '../updater-lifecycle-diagnostics'
 import { AUTO_UPDATE_CHECK_INTERVAL_MS } from './updater-state'
 import { UpdaterDownloadInstall } from './updater-download-install'
 import type { PreQuitCleanupFailureMode, UpdateInstallMode } from './updater-state'
+import { hasCompatibleDesktopUpdateFeed } from './windows-arm64-update-policy'
 
 export type UpdaterSetupOptions = {
   getLastUpdateCheckAt?: () => number | null
@@ -38,23 +39,45 @@ export type UpdaterSetupOptions = {
 /** Initializes electron-updater and attaches lifecycle/event bridges. */
 export class UpdaterSetup extends UpdaterDownloadInstall {
   checkForUpdates(): void {
+    if (!hasCompatibleDesktopUpdateFeed()) {
+      return
+    }
     this.checkForUpdatesInBackground()
   }
 
   checkForUpdatesFromMenu(options?: UpdateCheckOptions): void {
+    if (this.rejectIncompatibleDesktopFeed()) {
+      return
+    }
     super.checkForUpdatesFromMenu(options)
   }
 
   downloadUpdate(): void {
+    if (this.rejectIncompatibleDesktopFeed()) {
+      return
+    }
     super.downloadUpdate()
   }
 
   quitAndInstall(): void {
+    if (this.rejectIncompatibleDesktopFeed()) {
+      this.mainWindowRef?.webContents.send('updater:quitAndInstallAborted')
+      return
+    }
     super.quitAndInstall()
   }
 
   isQuittingForUpdate(): boolean {
     return super.isQuittingForUpdate()
+  }
+
+  private rejectIncompatibleDesktopFeed(): boolean {
+    if (hasCompatibleDesktopUpdateFeed()) {
+      return false
+    }
+    // Agency's reviewed weekly installer owns this platform; a blocked check is not an error.
+    this.sendStatus({ state: 'idle' })
+    return true
   }
 
   getUpdateStatus(): UpdateStatus {
@@ -142,6 +165,9 @@ export class UpdaterSetup extends UpdaterDownloadInstall {
       return
     }
 
+    if (!hasCompatibleDesktopUpdateFeed()) {
+      return
+    }
     const autoUpdater = this.getAutoUpdater()
     autoUpdater.autoDownload = false
     if (this.activeUpdateSource === 'release') {

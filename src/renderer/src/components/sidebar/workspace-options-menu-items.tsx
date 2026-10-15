@@ -2,7 +2,6 @@ import { useMemo, type JSX } from 'react'
 import { useAppStore } from '@/store'
 import {
   DropdownMenuLabel,
-  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
@@ -22,7 +21,7 @@ import { PROJECT_ORDER_OPTIONS, SORT_OPTIONS } from './sidebar-workspace-option-
 import { WorktreeCardDisplayMenuSection } from './WorktreeCardDisplayMenuSection'
 import { translate } from '@/i18n/i18n'
 import { SidebarGroupByToggle } from './SidebarGroupByToggle'
-import { updateChatSidebar } from './chat-sidebar-preferences'
+import { formatActiveFilterLabel } from './options-filter-count-badge'
 
 export function useWorkspaceOptionsFilterBadge(): {
   hasAnyFilter: boolean
@@ -81,7 +80,7 @@ export function useWorkspaceOptionsFilterBadge(): {
   return {
     hasAnyFilter,
     activeFilterCount,
-    activeFilterLabel: `${activeFilterCount} ${activeFilterCount === 1 ? 'filter' : 'filters'}`
+    activeFilterLabel: formatActiveFilterLabel(activeFilterCount)
   }
 }
 
@@ -110,10 +109,6 @@ export function WorkspaceOptionsMenuItems({
 
   return (
     <>
-      <DropdownMenuItem onSelect={() => void updateChatSidebar({ view: 'chats' })}>
-        Show every chat
-      </DropdownMenuItem>
-      <DropdownMenuSeparator />
       <DropdownMenuLabel className="pb-0 text-sm text-foreground">
         {translate(
           'auto.components.sidebar.SidebarWorkspaceOptionsMenu.workspaceOptions',

@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto'
 import type { Page } from '@stablyai/playwright-test'
 import { expect } from '@stablyai/playwright-test'
 import { sendToTerminal } from './helpers/terminal'
-import { nodeTerminalCommand } from './terminal-node-command'
-import { buildFreshShellProbeInputSequence } from './terminal-probe-input-sequence'
+import {
+  buildFreshShellProbeInputSequence,
+  encodedShellMarkerCommand
+} from './terminal-probe-input-sequence'
 
 type TerminalPtyReadinessWindow = Window & {
   __paneManagers?: Map<
@@ -67,14 +69,6 @@ export async function waitForPtyPaneMounted(
     .toBe(true)
 }
 
-function encodedMarkerCommand(marker: string): string {
-  const encoded = Buffer.from(marker, 'utf8').toString('base64')
-  return `${nodeTerminalCommand([
-    '-e',
-    `console.log(Buffer.from('${encoded}', 'base64').toString('utf8'))`
-  ])}\r`
-}
-
 export async function waitForPtyShellEcho(
   page: Page,
   ptyId: string,
@@ -86,7 +80,7 @@ export async function waitForPtyShellEcho(
   while (Date.now() < deadline) {
     // Why: terminal scrollback includes command echo. Encode the marker inside
     // the node snippet so seeing the plain marker proves the shell executed it.
-    for (const input of buildFreshShellProbeInputSequence(encodedMarkerCommand(marker))) {
+    for (const input of buildFreshShellProbeInputSequence(encodedShellMarkerCommand(marker))) {
       await sendToTerminal(page, ptyId, input)
     }
 

@@ -18,6 +18,7 @@ import {
   waitForSttWorkerReady
 } from './stt-worker-startup'
 import { START_DICTATION_TIMEOUT_MS } from './stt-session-timeouts'
+import { assertLocalSpeechSupported } from './speech-platform-support'
 
 export async function startSttDictation(
   state: SttSessionState,
@@ -85,6 +86,7 @@ async function startSttSession(
     return
   }
 
+  assertLocalSpeechSupported()
   if (state.cloudSession) {
     await stopSttDictation(state, owner, { cancelStarting: false })
   }

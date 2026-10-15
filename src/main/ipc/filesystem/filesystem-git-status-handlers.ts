@@ -7,7 +7,6 @@ import type {
 import type { GitDiffResult } from '../../../shared/git-diff-compare-types'
 import type { GitHistoryOptions, GitHistoryResult } from '../../../shared/git-history'
 import type { GitStatusUpstreamRefWatchRequest } from '../git-status-upstream-ref-watch-request'
-import type { GitAdmissionTier } from '../../git/command-runner/git-exec-options'
 import {
   getStatus,
   getSubmoduleStatus,
@@ -36,41 +35,25 @@ import {
 import { getWorktreeSharedLinkPaths } from '../../git/worktree-shared-directories'
 import { applyGitStatusUpstreamRefWatchRequest } from '../git-status-upstream-ref-watch-request'
 import type { FilesystemHandlerContext } from './filesystem-handler-context'
+import { isFolderRepo } from '../../../shared/repo-kind'
+import { isRegisteredSshFolderStatus } from '../registered-ssh-folder-status'
+import {
+  filesystemGitStatusOptions,
+  type FilesystemGitStatusRequest
+} from './filesystem-git-status-options'
 
 export function registerFilesystemGitStatusHandlers(context: FilesystemHandlerContext): void {
   const { store, gitStatusCancellations } = context
   ipcMain.handle(
     'git:status',
-    async (
-      event,
-      args: {
-        worktreePath: string
-        connectionId?: string
-        admissionTier?: GitAdmissionTier
-        includeIgnored?: boolean
-        includeLineStats?: boolean
-        bypassEffectiveUpstreamNegativeCache?: boolean
-        reuseLineStats?: boolean
-        branchLineTotalMergeBase?: string
-        requestToken?: string
-      }
-    ): Promise<GitStatusResult> => {
+    async (event, args: FilesystemGitStatusRequest): Promise<GitStatusResult> => {
       const controller = gitStatusCancellations.begin(event, args.requestToken)
-      const options = {
-        includeIgnored: args.includeIgnored ?? false,
-        admissionTier: args.admissionTier ?? ('status' as const),
-        ...(args.includeLineStats === false ? { includeLineStats: false } : {}),
-        ...(args.reuseLineStats === true ? { reuseLineStats: true } : {}),
-        ...(args.branchLineTotalMergeBase === undefined
-          ? {}
-          : { branchLineTotalMergeBase: args.branchLineTotalMergeBase }),
-        ...(args.bypassEffectiveUpstreamNegativeCache === true
-          ? { bypassEffectiveUpstreamNegativeCache: true }
-          : {}),
-        ...(controller ? { signal: controller.signal } : {})
-      }
+      const options = filesystemGitStatusOptions(args, controller?.signal)
       try {
         if (args.connectionId) {
+          if (isRegisteredSshFolderStatus(store, args.worktreePath, args.connectionId)) {
+            return { entries: [], conflictOperation: 'unknown' }
+          }
           const provider = getSshGitProvider(args.connectionId)
           if (!provider) {
             throw new Error(SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE)
@@ -82,6 +65,10 @@ export function registerFilesystemGitStatusHandlers(context: FilesystemHandlerCo
         // Why: one registered-worktree lookup feeds both — status polls this
         // handler, and the scan walks every repo's worktree meta.
         const repo = getLocalRepoForRegisteredWorktree(store, args.worktreePath, worktreePath)
+        // Folder projects can contain Git metadata without opting into source-control polling.
+        if (repo && isFolderRepo(repo)) {
+          return { entries: [], conflictOperation: 'unknown' }
+        }
         const gitOptions = getLocalGitOptionsForRepo(store, repo)
         const sharedLinkPaths = repo ? getWorktreeSharedLinkPaths(repo) : []
         return await getStatus(worktreePath, {

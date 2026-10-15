@@ -31,6 +31,7 @@ export const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
   paneRect,
   isMultiPane = false,
   hoverEdge,
+  hoverSwap,
   shouldMeasureHiddenWorktree,
   shouldColdParkTerminalPanes,
   isForceParked,
@@ -47,6 +48,7 @@ export const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
   paneRect?: WorkspacePaneRect
   isMultiPane?: boolean
   hoverEdge?: WorkspaceSplitEdge | null
+  hoverSwap?: boolean
   shouldMeasureHiddenWorktree: boolean
   shouldColdParkTerminalPanes: boolean
   isForceParked: boolean
@@ -92,6 +94,12 @@ export const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
         }
       }}
     >
+      {hoverSwap ? (
+        <div
+          data-workspace-drop-swap="true"
+          className="pointer-events-none absolute inset-0 z-50 border-2 border-primary bg-primary/15"
+        />
+      ) : null}
       {hoverEdge ? (
         <div
           data-workspace-drop-edge={hoverEdge}

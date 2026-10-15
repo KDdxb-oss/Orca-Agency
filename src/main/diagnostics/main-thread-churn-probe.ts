@@ -10,7 +10,10 @@ const TICK_MS = 25
 const REPORT_EVERY_MS = 5_000
 
 export function isMainThreadDiagnosticsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env[MAIN_THREAD_DIAGNOSTICS_ENV] === '1'
+  return (
+    env[MAIN_THREAD_DIAGNOSTICS_ENV] === '1' ||
+    process.argv.includes('--orca-main-thread-diagnostics')
+  )
 }
 
 // Git global options that precede the subcommand. Value-taking flags must be
@@ -139,6 +142,7 @@ export function writeMainThreadDiagnosticMarker(marker: string): void {
 export type MainThreadChurnProbeOptions = {
   /** Extra counters folded into each report line, sampled once per window. */
   extraStats?: () => Record<string, unknown>
+  writeLine?: (line: string) => void
 }
 
 /**
@@ -158,6 +162,7 @@ export function startMainThreadChurnProbe(options: MainThreadChurnProbeOptions =
   let windowMaxGapMs = 0
   let gapsOver50Ms = 0
   let gapsOver250Ms = 0
+  let cpu = process.cpuUsage()
   const timer = setInterval(() => {
     const now = performance.now()
     const gap = now - last - TICK_MS
@@ -176,19 +181,25 @@ export function startMainThreadChurnProbe(options: MainThreadChurnProbeOptions =
     }
     lastReport = now
     const spawns = drainSubprocessSpawnStats()
+    const usage = process.cpuUsage(cpu)
+    cpu = process.cpuUsage()
     const report = {
+      at: new Date().toISOString(),
+      pid: process.pid,
       t: Math.round(now),
       maxGapMs: Math.max(0, Math.round(windowMaxGapMs)),
       gapsOver50Ms,
       gapsOver250Ms,
       spawnCount: Object.values(spawns).reduce((sum, s) => sum + s.count, 0),
+      cpuMs: Math.round((usage.user + usage.system) / 1000),
+      rssBytes: process.memoryUsage().rss,
       spawns,
       ...options.extraStats?.()
     }
     windowMaxGapMs = 0
     gapsOver50Ms = 0
     gapsOver250Ms = 0
-    writeStartupDiagnosticLine(`[main-thread] ${JSON.stringify(report)}`)
+    ;(options.writeLine ?? writeStartupDiagnosticLine)(`[main-thread] ${JSON.stringify(report)}`)
   }, TICK_MS)
   timer.unref?.()
 }

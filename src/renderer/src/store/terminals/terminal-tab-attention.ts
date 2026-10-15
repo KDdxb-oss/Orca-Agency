@@ -2,6 +2,8 @@ import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { resolveTerminalWorktreeRoute } from '@/lib/terminal-worktree-route'
 import type { TerminalSlice, TerminalStoreGet, TerminalStoreSet } from './terminal-state'
 import { findRenamableUnifiedTab } from './renamable-unified-tab'
+import { updateChatSidebarSettings } from '@/lib/chat-sidebar-settings-update'
+import { chatSidebarTabRename } from '@/components/sidebar/chat-sidebar-tab-rename'
 
 export function createTerminalTabAttentionActions(
   set: TerminalStoreSet,
@@ -87,17 +89,41 @@ export function createTerminalTabAttentionActions(
       })
     },
     setTabCustomTitle: (tabId, title, opts) => {
-      set((s) => {
-        const next = { ...s.tabsByWorktree }
-        for (const wId of Object.keys(next)) {
-          next[wId] = next[wId].map((t) => (t.id === tabId ? { ...t, customTitle: title } : t))
+      const applyTitle = () => {
+        set((s) => {
+          const next = { ...s.tabsByWorktree }
+          for (const wId of Object.keys(next)) {
+            next[wId] = next[wId].map((t) =>
+              t.id === tabId
+                ? { ...t, customTitle: title, sidebarTitleId: opts?.sidebarTitleId }
+                : t
+            )
+          }
+          scheduleRuntimeGraphSync()
+          return { tabsByWorktree: next }
+        })
+        const item = findRenamableUnifiedTab(get().unifiedTabsByWorktree, tabId)
+        if (item) {
+          get().setTabCustomLabel(item.id, title, opts)
         }
-        scheduleRuntimeGraphSync()
-        return { tabsByWorktree: next }
-      })
-      const item = findRenamableUnifiedTab(get().unifiedTabsByWorktree, tabId)
-      if (item) {
-        get().setTabCustomLabel(item.id, title, opts)
+      }
+      const state = get()
+      if (
+        opts?.syncSidebarTitle !== false &&
+        state.settings?.chatSidebar?.titles &&
+        chatSidebarTabRename(state, tabId, title, state.settings.chatSidebar)
+      ) {
+        // Why: clearing a title must clear its saved name before restore can fill the tab again.
+        void updateChatSidebarSettings(get, (current) =>
+          chatSidebarTabRename(get(), tabId, title, current)
+        )
+          .then(applyTitle)
+          .catch((error) => {
+            applyTitle()
+            console.debug('[chat-sidebar] tab rename could not be saved', error)
+          })
+      } else {
+        applyTitle()
       }
     },
     setTabColor: (tabId, color) => {

@@ -191,6 +191,23 @@ describe('closed-sidebar Cmd+1-9 ordering (#9497)', () => {
     expect(getVisibleWorktreeIds()).toContain(folderWorkspaceKey(folderWorkspace.id))
   })
 
+  it('numbers grouped folders by Recent activity when their saved order disagrees', () => {
+    const group = makeProjectGroup('group-1')
+    const older = { ...makeFolderWorkspace('older', group.id), lastActivityAt: 100, sortOrder: 9 }
+    const newer = { ...makeFolderWorkspace('newer', group.id), lastActivityAt: 200, sortOrder: 1 }
+    seedStore([], {
+      groupBy: 'workspace-status',
+      sortBy: 'recent',
+      projectGroups: [group],
+      folderWorkspaces: [older, newer]
+    })
+
+    expect(getVisibleWorktreeIds().filter((id) => id.startsWith('folder:'))).toEqual([
+      folderWorkspaceKey(newer.id),
+      folderWorkspaceKey(older.id)
+    ])
+  })
+
   it('numbers a workspace created while nothing was published', () => {
     // A retained-cache fix cannot surface this: it can only prune ids it already had.
     seedStore([makeMainWorktree('wt-main')])

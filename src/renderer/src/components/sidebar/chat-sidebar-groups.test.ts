@@ -16,7 +16,7 @@ describe('workspace chat groups', () => {
     ]
     const items = chatSidebarListItems(rows, source, '', [], new Set(['chat:status:In progress']))
     expect(items.filter((item) => item.kind === 'heading')).toEqual([
-      { kind: 'heading', id: 'chat:status:In progress', label: 'In progress (2)', collapsed: true },
+      { kind: 'heading', id: 'chat:status:In progress', label: 'In Progress (2)', collapsed: true },
       { kind: 'heading', id: 'chat:status:Done', label: 'Done (1)', collapsed: false }
     ])
     expect(items.filter((item) => item.kind === 'chat').map((item) => item.id)).toEqual(['closed'])
@@ -46,7 +46,7 @@ describe('workspace chat groups', () => {
     expect(items.filter((item) => item.showFolder)).toHaveLength(1)
   })
   const state = chatState({ tabsByWorktree: { [chatWorktree.id]: [chatTab('a'), chatTab('b')] } })
-  const main = chatRow({ id: 'main', tabId: 'a', completed: true, timestamp: 10 })
+  const main = chatRow({ id: 'main', tabId: 'a', timestamp: 10 })
   const child = chatRow({
     id: 'child',
     tabId: 'b',
@@ -76,7 +76,7 @@ describe('workspace chat groups', () => {
   })
 
   it('brackets split workspaces together and restores independent sorting after unsplitting', () => {
-    const older = { ...other, timestamp: 1, completed: true }
+    const older = { ...other, timestamp: 1 }
     const middle = {
       ...other,
       id: 'middle',
@@ -142,9 +142,16 @@ describe('workspace chat groups', () => {
       ['child', true, true],
       ['other', false, true]
     ])
-    expect(items[0]).toMatchObject({ kind: 'heading', label: 'In progress (3)' })
+    expect(items[0]).toMatchObject({ kind: 'heading', label: 'In Progress (3)' })
     expect(
-      chatSidebarListItems([main, { ...child, completed: true, state: 'idle' }], state, '')[0]
+      chatSidebarListItems(
+        [
+          { ...main, completed: true },
+          { ...child, completed: true, state: 'idle' }
+        ],
+        state,
+        ''
+      )[0]
     ).toMatchObject({ label: 'Done (2)' })
   })
 

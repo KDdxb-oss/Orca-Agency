@@ -35,3 +35,21 @@ it.each(['created', 'unverifiable', 'not-created'] as const)(
     expect(mocks.discard).toHaveBeenCalledTimes(outcome === 'not-created' ? 1 : 0)
   }
 )
+
+it('reopens an ungrouped chat in its existing workspace without deleting it on failure', async () => {
+  mocks.create.mockResolvedValue(chatWorktree)
+  const resume = vi.fn()
+  await openSavedSidebarChat(
+    chatRow({ tabId: null, session: chatSession('ungrouped-saved') }),
+    resume
+  )
+
+  expect(resume).toHaveBeenCalledWith(
+    expect.objectContaining({ sessionId: 'ungrouped-saved' }),
+    chatWorktree.id,
+    expect.any(Object)
+  )
+  const placement: AiVaultResumePlacement = resume.mock.calls[0][2]
+  placement.onSettled?.('not-created')
+  expect(mocks.discard).not.toHaveBeenCalled()
+})

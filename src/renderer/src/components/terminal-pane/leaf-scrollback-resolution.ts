@@ -40,3 +40,16 @@ export function resolveTabScrollbackBuffers(
     localOnly: session.localOnlyScrollbackByTabId?.[tabId]
   })
 }
+
+/** Clear one pane without discarding scrollback retained for sibling panes. */
+export function withoutLeafScrollbackBuffer(
+  buffers: Record<string, string> | undefined,
+  leafId: string
+): Record<string, string> | undefined {
+  if (!buffers || !(leafId in buffers)) {
+    return buffers
+  }
+  const next = { ...buffers }
+  delete next[leafId]
+  return next
+}

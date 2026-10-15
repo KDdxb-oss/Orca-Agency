@@ -98,7 +98,12 @@ export function TerminalSplitWorkspaceSurfaces({
         isVisible={isVisible}
         isFocused={isVisible && workspace.id === renderedActiveWorktreeId}
         isMultiPane={group !== null && isVisible}
-        hoverEdge={hover?.id === workspace.id && !hover.wholeWindow ? hover.edge : null}
+        hoverEdge={
+          hover?.id === workspace.id && !hover.wholeWindow && !hover.placement && !hover.strip
+            ? hover.edge
+            : null
+        }
+        hoverSwap={hover?.id === workspace.id && hover.placement?.kind === 'swap'}
         paneRect={group && isVisible ? paneRects.get(workspace.id) : undefined}
         shouldMeasureHiddenWorktree={shouldMeasureHiddenWorktree}
         shouldColdParkTerminalPanes={shouldColdParkTerminalPanes}
@@ -142,6 +147,18 @@ export function TerminalSplitWorkspaceSurfaces({
         )
       )}
       {hover?.wholeWindow ? <WorkspaceDropPreview edge={hover.edge} /> : null}
+      {hover?.placement?.kind === 'quadrant' ? (
+        <WorkspaceDropPreview quadrant={hover.placement.quadrant} />
+      ) : null}
+      {hover?.strip ? (
+        <div
+          data-workspace-tab-insertion={hover.strip.index}
+          className="pointer-events-none fixed z-50 border-l-2 border-primary"
+          style={{ left: hover.strip.left, top: hover.strip.top, height: hover.strip.height }}
+        >
+          <span className="absolute -left-1.5 -top-1 text-xs text-primary">▼</span>
+        </div>
+      ) : null}
     </div>
   )
 }

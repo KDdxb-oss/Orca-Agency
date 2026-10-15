@@ -124,7 +124,8 @@ export function joinAbsolutePath(basePath: string, relativePath: string): string
     return null
   }
 
-  // Normalize after joining so `..` can climb out of the base directory.
-  const prefix = normalizedBase.normalized.replace(/\/$/, '')
-  return normalizeAbsolutePath(`${prefix}/${relativePath}`)?.normalized ?? null
+  const base = normalizedBase.normalized.replace(/\/$/, '')
+  const suffix = relativePath.replace(/^[\\/]+/, '')
+  // Resolve parent segments against the base while its drive or UNC share remains the root.
+  return normalizeAbsolutePath(`${base}/${suffix}`)?.normalized ?? null
 }

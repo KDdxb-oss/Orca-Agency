@@ -82,6 +82,17 @@ describe('Claude chat folder resume preparation', () => {
     )
     expect(await readFile(f.args.filePath, 'utf8')).toBe(f.contents)
   })
+  it('reopens the continued destination when the saved list still points at the original', async () => {
+    const f = await fixture()
+    const first = await prepareClaudeFolderResume(f.args)
+    const continuation =
+      '{"type":"assistant","sessionId":"session-123","message":{"content":"Next turn"}}\n'
+    await writeFile(first.relocatedClaudeSession!.filePath, f.contents + continuation)
+    expect((await prepareClaudeFolderResume(f.args)).relocatedClaudeSession).toEqual(
+      first.relocatedClaudeSession
+    )
+    expect(await readFile(f.args.filePath, 'utf8')).toBe(f.contents)
+  })
   it('allows a provider filename alias when reopening in the same canonical folder', async () => {
     const f = await fixture()
     const bucket = path.join(f.projects, encodeClaudeProjectPath(f.cwd))
@@ -102,6 +113,6 @@ describe('Claude chat folder resume preparation', () => {
     )
     await expect(
       prepareClaudeFolderResume({ ...f.args, resumeCwd: path.join(f.root, 'missing') })
-    ).rejects.toThrow()
+    ).rejects.toThrow('The selected chat folder no longer exists')
   })
 })

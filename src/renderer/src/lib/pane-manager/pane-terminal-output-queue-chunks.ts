@@ -120,6 +120,7 @@ export function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite |
   }
 
   compactConsumedChunks(entry)
+  entry.interactiveCharsRemaining = Math.max(0, entry.interactiveCharsRemaining - dataLength)
   if (entry.queuedChars < 0) {
     entry.queuedChars = 0
   }
@@ -180,6 +181,7 @@ export function enqueueChunk(
   data: string,
   options?: {
     foreground?: boolean
+    latencySensitive?: boolean
     forceForegroundRefresh?: boolean
     followupForegroundRefresh?: boolean
     shouldRefreshForegroundSynchronously?: ForegroundRefreshSyncResolver
@@ -205,5 +207,11 @@ export function enqueueChunk(
     ackCredit: options?.ackCredit
   })
   entry.queuedChars += data.length
+  if (options?.foreground && options.latencySensitive !== false) {
+    // Why: only the queued prefix through the latest echo needs priority; later bulk must not inherit it.
+    entry.interactiveCharsRemaining = entry.queuedChars
+  } else if (!options?.foreground) {
+    entry.interactiveCharsRemaining = 0
+  }
   recordQueueDebugPressure()
 }

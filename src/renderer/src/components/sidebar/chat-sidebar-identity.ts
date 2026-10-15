@@ -39,6 +39,10 @@ export function chatPreference<T>(
   return key === undefined ? undefined : values[key]
 }
 
+function scannedClaudeSessionKey(hostId: string, sessionId: string, filePath: string): string {
+  return JSON.stringify([hostId, sessionId, normalizeRuntimePathForComparison(filePath)])
+}
+
 function moveAliases<T>(values: Record<string, T>, row: RowIds, target: string): boolean {
   let changed = false
   for (const alias of row.aliases) {
@@ -82,9 +86,33 @@ export function chatSidebarPreferencePatch(
   const ordered = [...rows].sort(
     (a, b) => Number(a.id !== a.sessionKey) - Number(b.id !== b.sessionKey)
   )
+  const scannedClaude = new Map<string, AiVaultSession>()
+  for (const session of options.scannedSessions ?? []) {
+    if (session.agent === 'claude') {
+      scannedClaude.set(
+        scannedClaudeSessionKey(session.executionHostId, session.sessionId, session.filePath),
+        session
+      )
+    }
+  }
   for (const [key, stored] of Object.entries(sessions)) {
     const proof = stored.resumeLauncher
     const snapshot = stored.snapshot
+    const scanned =
+      snapshot?.agent === 'claude'
+        ? scannedClaude.get(
+            scannedClaudeSessionKey(snapshot.executionHostId, snapshot.sessionId, snapshot.filePath)
+          )
+        : undefined
+    if (scanned && snapshot && snapshot.isHeadless !== scanned.isHeadless) {
+      const updatedSnapshot = { ...snapshot }
+      if (scanned.isHeadless === true) {
+        updatedSnapshot.isHeadless = true
+      } else {
+        delete updatedSnapshot.isHeadless
+      }
+      sessions[key] = { ...stored, snapshot: updatedSnapshot }
+    }
     if (
       !proof ||
       !snapshot ||
@@ -94,20 +122,15 @@ export function chatSidebarPreferencePatch(
     ) {
       continue
     }
-    const scannedLauncher = options.scannedSessions?.find(
-      (session) =>
-        session.agent === 'claude' &&
-        session.executionHostId === snapshot.executionHostId &&
-        session.sessionId === proof.sessionId &&
-        normalizeRuntimePathForComparison(session.filePath) ===
-          normalizeRuntimePathForComparison(proof.transcriptPath)
+    const scannedLauncher = scannedClaude.get(
+      scannedClaudeSessionKey(snapshot.executionHostId, proof.sessionId, proof.transcriptPath)
     )
     if (
       scannedLauncher &&
       (isAiVaultSessionResumableContent(scannedLauncher) ||
         scannedLauncher.resumedSessionIdPrefix !== proof.targetSessionIdPrefix)
     ) {
-      sessions[key] = { ...stored, resumeLauncher: undefined }
+      sessions[key] = { ...sessions[key], resumeLauncher: undefined }
     }
   }
   // A launcher that now has its own conversation, or points to a different background
@@ -197,9 +220,27 @@ export function chatSidebarPreferencePatch(
       const resumeLauncher =
         row.resumeLauncher ??
         (stored?.worktreeId === worktreeId ? stored.resumeLauncher : undefined)
+      const rowSnapshot = row.session ? chatSessionSnapshot(row.session) : stored?.snapshot
+      const classifiedSnapshot =
+        rowSnapshot?.agent === 'claude' &&
+        rowSnapshot.isHeadless === undefined &&
+        stored?.snapshot?.agent === 'claude' &&
+        stored?.snapshot?.isHeadless !== undefined &&
+        scannedClaudeSessionKey(
+          rowSnapshot.executionHostId,
+          rowSnapshot.sessionId,
+          rowSnapshot.filePath
+        ) ===
+          scannedClaudeSessionKey(
+            stored.snapshot.executionHostId,
+            stored.snapshot.sessionId,
+            stored.snapshot.filePath
+          )
+          ? { ...rowSnapshot, isHeadless: stored.snapshot.isHeadless }
+          : rowSnapshot
       const snapshot = freshestChatSnapshot(
         freshestChatSnapshot(
-          row.session ? chatSessionSnapshot(row.session) : stored?.snapshot,
+          classifiedSnapshot,
           recordedSessions.has(row.sessionKey) ? (stored?.snapshot ?? null) : null,
           false
         ),

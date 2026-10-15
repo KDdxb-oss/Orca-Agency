@@ -184,8 +184,8 @@ def enqueue_email(message_id):
     thread = gh(f'repos/{target["repo"]}/{route}/{target["number"]}')
     if target['kind'] == 'workflow' and thread.get('conclusion') not in ('failure', 'timed_out', 'action_required'):
         return {'result': 'ignored', 'reason': 'Workflow has no current failure'}
-    if target['repo'] == 'stablyai/orca' and thread.get('user', {}).get('login') != SELF:
-        return {'result': 'ignored', 'reason': 'Upstream thread was not filed by Brooks'}
+    if not followed_thread(target, thread):
+        return {'result': 'ignored', 'reason': 'Upstream thread has no post by Brooks'}
     key = item_key(target, message_id)
     with lock('state.lock'):
         saved = state()
@@ -205,13 +205,34 @@ def all_comments(target):
         route = f'repos/{repo}/pulls/{number}/comments'
     else:
         route = f'repos/{repo}/issues/{number}/comments'
-    result = []
+    return list(thread_entries(route))
+
+
+def thread_entries(route):
     for page in range(1, 21):
         entries = gh(f'{route}?per_page=100&page={page}')
-        result += entries
+        yield from entries
         if len(entries) < 100:
-            return result
+            return
     raise RuntimeError('Thread exceeds the reviewed comment limit')
+
+
+def followed_thread(target, thread):
+    if target['repo'] != 'stablyai/orca' or (thread.get('user') or {}).get('login') == SELF:
+        return True
+    repo, number = target['repo'], target['number']
+    if any((entry.get('user') or {}).get('login') == SELF
+           for entry in thread_entries(f'repos/{repo}/issues/{number}/comments')):
+        return True
+    if not isinstance(thread.get('pull_request'), dict):
+        return False
+    reviews = list(thread_entries(f'repos/{repo}/pulls/{number}/reviews'))
+    submitted = [entry for entry in reviews if entry.get('state') in ('APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED')]
+    if any((entry.get('user') or {}).get('login') == SELF for entry in submitted):
+        return True
+    submitted_ids = {entry['id'] for entry in submitted if entry.get('id') is not None}
+    return any((entry.get('user') or {}).get('login') == SELF and entry.get('pull_request_review_id') in submitted_ids
+               for entry in thread_entries(f'repos/{repo}/pulls/{number}/comments'))
 
 
 def finish(key, reason, reply=None, run_token=None):
@@ -224,6 +245,8 @@ def finish(key, reason, reply=None, run_token=None):
             raise ValueError('This item belongs to another review batch')
         if item['status'] == 'handled':
             return item
+        if run_token and (item['status'] != 'pending' or (saved['activeRun'] or {}).get('token') != run_token):
+            return {'result': 'expired_batch', 'reason': 'This reviewer no longer owns the pending item'}
         target = item['target']
         if reply is not None:
             if target['kind'] == 'workflow':
@@ -234,10 +257,10 @@ def finish(key, reason, reply=None, run_token=None):
             if target['repo'] not in REPOS:
                 raise ValueError('Reply repository is not allowed')
             thread = gh(f'repos/{target["repo"]}/issues/{target["number"]}')
-            if target['repo'] == 'stablyai/orca' and thread.get('user', {}).get('login') != SELF:
-                raise ValueError('Upstream thread ownership changed')
+            if not followed_thread(target, thread):
+                raise ValueError('Upstream thread no longer has a post by Brooks')
             marker = f'<!-- orca-agency-email:{key} -->'
-            existing = [c for c in all_comments(target) if c.get('user', {}).get('login') == SELF and marker in c.get('body', '')]
+            existing = [c for c in all_comments(target) if (c.get('user') or {}).get('login') == SELF and marker in (c.get('body') or '')]
             if existing:
                 item['replyUrl'] = existing[0]['html_url']
             elif item.get('postAttemptAt'):
@@ -252,7 +275,7 @@ def finish(key, reason, reply=None, run_token=None):
                     actual = comment.get('html_url', '')
                     if not any(actual.startswith(expected + lane + f'/{target["number"]}#') for lane in ('issues', 'pull')):
                         raise ValueError('Comment does not belong to the verified thread')
-                if comment.get('user', {}).get('login') == SELF or comment.get('user', {}).get('type') == 'Bot':
+                if (comment.get('user') or {}).get('login') == SELF or (comment.get('user') or {}).get('type') == 'Bot':
                     raise ValueError('Do not automatically reply to self or bots')
                 item['postAttemptAt'] = now()
                 write(ROOT / 'state.json', saved)
@@ -361,6 +384,12 @@ def inspect_active_run():
         uncertain = not run_id and elapsed > 120
         progress = datetime.fromisoformat(current.get('lastProgressAt', current['startedAt']).replace('Z', '+00:00')).timestamp()
         expired = time.time() - progress > 1800 or elapsed > 14400
+        # A renderer completion can precede the reviewer's final queue decision.
+        unfinished = any(item['status'] == 'pending' and item.get('runToken') == current.get('token')
+                         for item in saved['items'].values())
+        if (run and run['status'] == 'completed' and unfinished
+                and current.get('lastProgressAt') and time.time() - progress <= 300):
+            ended = False
         released = uncertain or expired or ended
         if released:
             saved['lastRun'] = current

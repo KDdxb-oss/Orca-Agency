@@ -1,6 +1,7 @@
 import type { AiVaultResumeSession } from '../../../../shared/ai-vault-resume-preparation'
 import { isPathInsideOrEqual } from '../../../../shared/cross-platform-path'
 import { isClaudeTranscriptInProjectBucket } from '../../../../shared/claude-project-path'
+import { isWslUncPath } from '../../../../shared/wsl-paths'
 import type { ChatSidebarRow } from './chat-sidebar-types'
 
 /**
@@ -16,6 +17,14 @@ export function chatResumeSession(
     return session
   }
   if (session.agent === 'claude' && session.executionHostId === 'local') {
+    // Why: local WSL transcripts live in Linux's Claude store, outside Windows folder preparation.
+    if (
+      isWslUncPath(session.filePath) ||
+      isWslUncPath(target) ||
+      (navigator.userAgent.includes('Windows') && session.executionHostPlatform === 'linux')
+    ) {
+      return session
+    }
     // Why: even an unchanged path may now be a junction to a differently named project bucket.
     const cwd =
       row.folderWorktree || isClaudeTranscriptInProjectBucket(session.filePath, target)

@@ -72,6 +72,9 @@ export function resolveBareAgentLaunchCommand(args: {
       isRemote: args.isRemote
     })
     const launchCommands = override ? [defaultLaunchCommand, override] : [defaultLaunchCommand]
+    if (agent === 'codex' && args.platform === 'win32') {
+      launchCommands.push(TUI_AGENT_CONFIG.codex.launchCmd)
+    }
     if (
       launchCommands.some((candidate) => command === normalizeAgentLaunchCommandForMatch(candidate))
     ) {

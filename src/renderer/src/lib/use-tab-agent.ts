@@ -1,33 +1,33 @@
 import { useEffect, useRef, useState } from 'react'
+import { useAppStore } from '@/store'
 import { isShellProcess } from '../../../shared/agent-detection'
-import { useTabAgentStoreSignals } from './tab-agent-store-signals'
+import { worktreeUsesRemoteConnection } from '@/store/terminals/terminal-workspace-routing'
+import { hasRemoteRuntimePtyForTab } from './tab-agent-remote-pty-selector'
+import { isTerminalLeafId, makePaneKey } from '../../../shared/stable-pane-id'
+import {
+  resolveFocusedCompletedTabAgent,
+  resolveFocusedRetainedTabAgent,
+  resolveFocusedTabAgent,
+  resolveSiblingCompletedTabAgent,
+  resolveSiblingRetainedTabAgent,
+  resolveSiblingTabAgent
+} from './tab-agent'
 import {
   isClaudeIdentityFrameTitle,
   resolveExplicitTerminalTitleAgentType
 } from '../../../shared/terminal-title-agent-type'
-import { resolveCompatibleAgentTypeForOwner } from '../../../shared/agent-title-owner'
+import { resolveSignalAgentForLaunchOwner } from './tab-agent-from-signals'
 import { isOpenCodeNativeTitle } from '../../../shared/opencode-terminal-title'
 import { resolvePaneAgentOwner } from '../../../shared/pane-agent-owner'
 import type { TerminalTab } from '../../../shared/terminal-tab-types'
+import type { TerminalAgent } from '../../../shared/terminal-agent'
 import type { TuiAgent } from '../../../shared/tui-agent'
+import { agentTypeToIconAgent } from './agent-status'
 
 // A shell name or the tab's neutral default title (where inferred-interrupt reset parks it); blank titles are no evidence.
 function titleShowsNoAgent(title: string, defaultTitle?: string): boolean {
   const trimmed = title.trim()
   return trimmed.length > 0 && (isShellProcess(trimmed) || trimmed === defaultTitle?.trim())
-}
-
-/**
- * Resolves wrapper-compatible signal identity against the launch owner.
- */
-function resolveSignalAgentForLaunchOwner(
-  signalAgent: TuiAgent | null | undefined,
-  launchAgent: TuiAgent | null
-): TuiAgent | null {
-  if (!signalAgent) {
-    return null
-  }
-  return (resolveCompatibleAgentTypeForOwner(signalAgent, launchAgent) ?? signalAgent) as TuiAgent
 }
 
 /**
@@ -40,10 +40,10 @@ export function resolveLaunchedAgentExitEvidence(args: {
   defaultTitle?: string
   isRemote: boolean
   hasObservedAgentSignal: boolean
-  hookAgent: TuiAgent | null
-  siblingHookAgent?: TuiAgent | null
+  hookAgent: TerminalAgent | null
+  siblingHookAgent?: TerminalAgent | null
   hasCompletedHook: boolean
-  processAgent?: TuiAgent | null
+  processAgent?: TerminalAgent | null
   processShellForeground?: boolean
 }): boolean {
   if (args.hookAgent || args.siblingHookAgent || args.processAgent) {
@@ -64,23 +64,25 @@ export function resolveTabAgentFromSignals(args: {
   isRemote: boolean
   title: string
   defaultTitle?: string
-  hookAgent: TuiAgent | null
-  siblingHookAgent?: TuiAgent | null
-  focusedCompletedHookAgent?: TuiAgent | null
-  siblingCompletedHookAgent?: TuiAgent | null
-  processAgent?: TuiAgent | null
+  hookAgent: TerminalAgent | null
+  siblingHookAgent?: TerminalAgent | null
+  focusedCompletedHookAgent?: TerminalAgent | null
+  siblingCompletedHookAgent?: TerminalAgent | null
+  processAgent?: TerminalAgent | null
   processShellForeground?: boolean
-  sleepingSessionAgent?: TuiAgent | null
+  sleepingSessionAgent?: TerminalAgent | null
   launchAgent?: TuiAgent
-}): TuiAgent | null {
+}): TerminalAgent | null {
   const launchAgent = args.launchAgent ?? null
   // Durable focused-pane owner (launch intent → hook → session); focused-pane-scoped so a sibling can't re-own the focused title (would mislabel a Pi pane as OMP).
-  const owner = resolvePaneAgentOwner({
-    launchAgent,
-    hookAgent: args.hookAgent,
-    completedHookAgent: args.focusedCompletedHookAgent,
-    sleepingSessionAgent: args.sleepingSessionAgent
-  }) as TuiAgent | null
+  const owner = agentTypeToIconAgent(
+    resolvePaneAgentOwner({
+      launchAgent,
+      hookAgent: args.hookAgent,
+      completedHookAgent: args.focusedCompletedHookAgent,
+      sleepingSessionAgent: args.sleepingSessionAgent
+    })
+  )
 
   // The live/idle split governs title override; siblings normalize against launch intent only.
   const liveFocusedIdentity = resolveSignalAgentForLaunchOwner(args.hookAgent, owner)
@@ -172,23 +174,85 @@ export function resolveTabAgentFromSignals(args: {
  * 6. launchAgent — bootstrap before any hook/process signal; cleared once exit evidence shows it left.
  * 7. Sibling-pane identity (live, then completed/retained) — split-tab fallback.
  */
-export function useTabAgent(tab: TerminalTab): TuiAgent | null {
-  // Why one subscription and not thirteen: this hook mounts once per tab-bar tab AND once
-  // per session-grid card, so its listener count multiplies by every mounted surface.
-  const {
-    focusedHookAgent,
-    siblingHookAgent,
-    focusedCompletedHookAgent,
-    siblingCompletedHookAgent,
-    processAgent,
-    processShellForeground,
-    sleepingSessionAgent,
-    ptyId,
-    completedHookScopeKnown,
-    isRemoteLike,
-    clearTabLaunchAgent
-  } = useTabAgentStoreSignals(tab.id, tab.worktreeId)
+export function useTabAgent(tab: TerminalTab): TerminalAgent | null {
+  const focusedHookAgent = useAppStore((s) =>
+    resolveFocusedTabAgent(s.agentStatusByPaneKey, s.terminalLayoutsByTabId[tab.id], tab.id)
+  )
+  const siblingHookAgent = useAppStore((s) =>
+    resolveSiblingTabAgent(s.agentStatusByPaneKey, s.terminalLayoutsByTabId[tab.id], tab.id)
+  )
+  const focusedCompletedHookAgent = useAppStore(
+    (s) =>
+      resolveFocusedCompletedTabAgent(
+        s.agentStatusByPaneKey,
+        s.terminalLayoutsByTabId[tab.id],
+        tab.id
+      ) ??
+      resolveFocusedRetainedTabAgent(
+        s.retainedAgentsByPaneKey,
+        s.terminalLayoutsByTabId[tab.id],
+        tab.id
+      )
+  )
+  const siblingCompletedHookAgent = useAppStore(
+    (s) =>
+      resolveSiblingCompletedTabAgent(
+        s.agentStatusByPaneKey,
+        s.terminalLayoutsByTabId[tab.id],
+        tab.id
+      ) ??
+      resolveSiblingRetainedTabAgent(
+        s.retainedAgentsByPaneKey,
+        s.terminalLayoutsByTabId[tab.id],
+        tab.id
+      )
+  )
   const hasCompletedHook = focusedCompletedHookAgent !== null
+  const clearTabLaunchAgent = useAppStore((s) => s.clearTabLaunchAgent)
+  const focusedPaneKey = useAppStore((s) => {
+    const activeLeafId = s.terminalLayoutsByTabId[tab.id]?.activeLeafId
+    return activeLeafId && isTerminalLeafId(activeLeafId) ? makePaneKey(tab.id, activeLeafId) : null
+  })
+  const processAgent = useAppStore((s) =>
+    focusedPaneKey ? (s.paneForegroundAgentByPaneKey[focusedPaneKey]?.agent ?? null) : null
+  )
+  const processShellForeground = useAppStore((s) =>
+    focusedPaneKey
+      ? Boolean(s.paneForegroundAgentByPaneKey[focusedPaneKey]?.shellForeground)
+      : false
+  )
+  // Why: a hibernated pane's session record is the freshest identity once PTY, hook, and process signals are all gone.
+  const sleepingSessionAgent = useAppStore((s) =>
+    focusedPaneKey ? (s.sleepingAgentSessionsByPaneKey[focusedPaneKey]?.agent ?? null) : null
+  )
+
+  // Focused pane's PTY; only used to reset per-process-generation signals on respawn.
+  const ptyId = useAppStore((s) => {
+    const layout = s.terminalLayoutsByTabId[tab.id]
+    const activeLeafId = layout?.activeLeafId
+    const leafPty = activeLeafId ? layout?.ptyIdsByLeafId?.[activeLeafId] : undefined
+    if (leafPty) {
+      return leafPty
+    }
+    const ptyIds = s.ptyIdsByTabId[tab.id] ?? []
+    return ptyIds.length === 1 ? ptyIds[0]! : null
+  })
+  // Why: with no layout to place a completed row, only a single-pane tab may treat it as focused-pane exit evidence.
+  const completedHookScopeKnown = useAppStore((s) => {
+    const layout = s.terminalLayoutsByTabId[tab.id]
+    if (layout?.activeLeafId && isTerminalLeafId(layout.activeLeafId)) {
+      return true
+    }
+    return (s.ptyIdsByTabId[tab.id] ?? []).length <= 1
+  })
+  const hasRemoteRuntimePty = useAppStore((s) =>
+    hasRemoteRuntimePtyForTab(
+      s.ptyIdsByTabId[tab.id],
+      s.terminalLayoutsByTabId[tab.id]?.ptyIdsByLeafId
+    )
+  )
+  const isRemoteWorktree = useAppStore((s) => worktreeUsesRemoteConnection(s, tab.worktreeId))
+  const isRemoteLike = isRemoteWorktree || hasRemoteRuntimePty
 
   const [hasObservedAgentSignal, setHasObservedAgentSignal] = useState(false)
   const hasObservedAgentSignalRef = useRef(false)

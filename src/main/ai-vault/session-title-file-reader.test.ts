@@ -8,6 +8,7 @@ const parseAgentSessionFileCached = vi.hoisted(() => vi.fn())
 vi.mock('./session-scanner-parse-cache', () => ({ parseAgentSessionFileCached }))
 
 const { readAiVaultSessionTitlesFromFiles } = await import('./session-title-file-reader')
+const { parseAiVaultSessionTitlesResult } = await import('./session-title-result-validation')
 const { resolveHostReadableAiVaultTitleRequests } = await import('./session-title-request-paths')
 
 let temporaryRoots: string[] = []
@@ -29,6 +30,24 @@ async function transcriptPath(): Promise<string> {
 }
 
 describe('readAiVaultSessionTitlesFromFiles', () => {
+  it('returns exact Claude headless classification across the title result boundary', async () => {
+    const path = await transcriptPath()
+    parseAgentSessionFileCached.mockResolvedValue({
+      agent: 'claude',
+      sessionId: 'headless',
+      title: 'One-shot audit',
+      messageCount: 1,
+      previewMessages: [],
+      isHeadless: true
+    })
+    const result = await readAiVaultSessionTitlesFromFiles([
+      { agent: 'claude', sessionId: 'headless', transcriptPath: path }
+    ])
+    expect(parseAiVaultSessionTitlesResult(result).titles).toEqual([
+      { agent: 'claude', sessionId: 'headless', title: 'One-shot audit', isHeadless: true }
+    ])
+  })
+
   it('does not publish a placeholder title from an unprompted session', async () => {
     const path = await transcriptPath()
     parseAgentSessionFileCached.mockResolvedValue({
@@ -98,14 +117,21 @@ describe('readAiVaultSessionTitlesFromFiles', () => {
   })
 
   it('uses the bounded worker index when no transcript path is available', async () => {
-    const cached = { agent: 'claude' as const, sessionId: 'session-1', title: 'Cached title' }
+    const cached = {
+      agent: 'claude' as const,
+      sessionId: 'session-1',
+      title: 'Cached title',
+      isHeadless: true
+    }
     const cache = { get: vi.fn(() => cached), set: vi.fn() }
 
     await expect(
       readAiVaultSessionTitlesFromFiles([{ agent: 'claude', sessionId: 'session-1' }], {
         cache
       })
-    ).resolves.toEqual({ titles: [cached] })
+    ).resolves.toEqual({
+      titles: [{ agent: 'claude', sessionId: 'session-1', title: 'Cached title' }]
+    })
     expect(parseAgentSessionFileCached).not.toHaveBeenCalled()
     expect(cache.set).not.toHaveBeenCalled()
   })

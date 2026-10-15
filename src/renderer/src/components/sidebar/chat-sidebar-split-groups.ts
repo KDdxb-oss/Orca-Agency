@@ -1,6 +1,6 @@
 import { collectWorkspaceIds, type WorkspaceSplitGroup } from '@/lib/workspace-split-layout'
 import { compareChatSidebarRows } from './chat-sidebar-rows'
-import type { ChatSidebarRow } from './chat-sidebar-types'
+import { chatHasWorkingTurn, type ChatSidebarRow } from './chat-sidebar-types'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 
 export type FocusedChatWorkspace = {
@@ -44,7 +44,9 @@ export function chatSidebarSplitGroups(
     const row = group.members[0]
     const link = row.tabId ? links.get(row.worktree.id) : undefined
     const splitId = link?.id ?? group.paneSplitId
-    const key = splitId ? `split:${splitId}` : group.id
+    const key = splitId
+      ? JSON.stringify([splitId, groupBy === 'status' ? row.completed : null])
+      : group.id
     const set = sets.get(key) ?? { splitId, groups: [] }
     set.groups.push(group)
     sets.set(key, set)
@@ -70,13 +72,19 @@ export function chatSidebarSplitGroups(
             ? 'Done'
             : 'In progress'
       const focusedWorking =
-        latest.state === 'working' &&
+        chatHasWorkingTurn(latest) &&
         !members.every((row) => row.completed) &&
         members.some(
           (row) =>
             row.tabId && row.worktree.id === focused?.worktreeId && row.hostId === focused.hostId
         )
-      return { ...set, latest, section, focusedWorking }
+      return {
+        ...set,
+        splitId: set.groups.length > 1 ? set.splitId : undefined,
+        latest,
+        section,
+        focusedWorking
+      }
     })
     .sort(
       (a, b) =>

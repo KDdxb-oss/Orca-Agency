@@ -1,8 +1,9 @@
+import { fileSearchClaimsTextKey } from '@/lib/file-search-shortcut-policy'
 import { useCallback, useEffect } from 'react'
 import type React from 'react'
 import type { Virtualizer } from '@tanstack/react-virtual'
 import { useAppStore } from '@/store'
-import { activateAndRevealWorktree } from '@/lib/worktree-activation'
+import { activateWorktreeFromSidebar } from '@/lib/sidebar-worktree-activation'
 import { focusRuntimeTerminalSurface } from '@/runtime/sync-runtime-graph'
 import { hasVisibleOverlay } from '@/lib/visible-overlay'
 import type { ExecutionHostId } from '../../../../../../shared/execution-host'
@@ -19,26 +20,6 @@ import {
 } from '../../worktree-keyboard-cycle'
 import { findPreferredRenderRowIndexForWorktreeIdentity } from './render-row-lookup'
 import { getWorkspaceStatus } from '../../../../../../shared/workspace-statuses'
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false
-  }
-
-  // xterm's hidden input textarea isn't a real text field; treating it as one would block sidebar shortcuts.
-  if (target.classList.contains('xterm-helper-textarea')) {
-    return false
-  }
-
-  if (target.isContentEditable) {
-    return true
-  }
-
-  return (
-    target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]') !==
-    null
-  )
-}
 
 export function useWorktreeListKeyboardNavigation(args: {
   rows: HostSectionRow[]
@@ -89,11 +70,7 @@ export function useWorktreeListKeyboardNavigation(args: {
         return
       }
 
-      // Why: keyboard cycling is real navigation; route through the activation helper that records history.
-      activateAndRevealWorktree(nextWorktree.id, {
-        navigationIntent: 'user-open',
-        ...(nextWorktree.hostId ? { executionHostId: nextWorktree.hostId } : {})
-      })
+      void activateWorktreeFromSidebar(nextWorktree.id, nextWorktree.hostId)
 
       const rowIndex = findPreferredRenderRowIndexForWorktreeIdentity(
         renderRows,
@@ -119,7 +96,12 @@ export function useWorktreeListKeyboardNavigation(args: {
       scrollRef.current?.removeAttribute('data-keyboard-navigation')
     }
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (activeModal !== 'none' || isEditableTarget(e.target)) {
+      if (
+        e.defaultPrevented ||
+        e.isComposing ||
+        activeModal !== 'none' ||
+        fileSearchClaimsTextKey(e)
+      ) {
         return
       }
 

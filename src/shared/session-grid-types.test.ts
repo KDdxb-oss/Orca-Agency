@@ -37,6 +37,7 @@ const EXPECTED_BUCKETS = {
   working: 'working',
   monitoring: 'working',
   permission: 'attention',
+  unconfirmed: 'attention',
   // The user's own Ctrl+C on a finished turn, not something asking for them.
   interrupted: 'done',
   failed: 'done',

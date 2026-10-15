@@ -11,6 +11,7 @@ function createEntry(): QueueEntry {
     queuedChars: 0,
     backgroundBacklogDropped: false,
     highPriority: false,
+    interactiveCharsRemaining: 0,
     foregroundHold: false,
     foregroundHoldSafetyDelayMs: 0,
     foregroundCoalesce: false,

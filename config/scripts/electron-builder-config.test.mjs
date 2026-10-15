@@ -15,16 +15,6 @@ const { copyFiles, FileMatcher } = require('app-builder-lib/out/fileMatcher')
 const FpmTarget = require('app-builder-lib/out/targets/FpmTarget').default
 const electronBuilderNativeRebuild = require('./electron-builder-native-rebuild.cjs')
 
-function isUnpacked(repoPath) {
-  const matcher = new FileMatcher(
-    '/app',
-    '/dest',
-    (value) => value,
-    electronBuilderConfig.asarUnpack
-  )
-  return matcher.createFilter()(join('/app', repoPath), { isDirectory: () => false })
-}
-
 describe('electron-builder config', () => {
   it('keeps the packaged app identity aligned with local-build validation', () => {
     expect(electronBuilderConfig.appId).toBe(
@@ -47,9 +37,6 @@ describe('electron-builder config', () => {
         '!tests{,/**/*}',
         '!examples{,/**/*}',
         '!pr-evidence{,/**/*}',
-        '!test-results{,/**/*}',
-        '!dist{,/**/*}',
-        '!.build{,/**/*}',
         '!notes{,/**/*}',
         '!{.claude,.grok,.agents,.codex}{,/**/*}',
         '!Casks{,/**/*}',
@@ -60,16 +47,25 @@ describe('electron-builder config', () => {
     )
   })
 
-  it('keeps local package outputs and scratch builds out of app.asar', () => {
+  it('keeps release build staging out of app.asar while preserving runtime output', () => {
     const matcher = new FileMatcher('/app', '/dest', (value) => value, electronBuilderConfig.files)
     matcher.prependPattern('**/*')
     const isPacked = matcher.createFilter()
-    const packs = (repoPath) => isPacked(join('/app', repoPath), { isDirectory: () => false })
-
-    expect(packs('dist/win-unpacked/resources/app.asar')).toBe(false)
-    expect(packs('.build/node_modules-broken/node_modules/example/index.js')).toBe(false)
-    expect(packs('test-results/sidebar-smoke/trace.zip')).toBe(false)
-    expect(packs('out/main/index.js')).toBe(true)
+    expect(isPacked(join('/app', '.build'), { isDirectory: () => true })).toBe(false)
+    for (const stagingPath of [
+      '.build/release-javascript/release-javascript.tar.gz',
+      '.build/release-javascript/manifest.json',
+      '.build/release-javascript-123/out/main/index.js'
+    ]) {
+      expect(isPacked(join('/app', stagingPath), { isDirectory: () => false })).toBe(false)
+    }
+    for (const runtimePath of [
+      'out/main/index.js',
+      'out/cli/index.js',
+      'out/renderer/index.html'
+    ]) {
+      expect(isPacked(join('/app', runtimePath), { isDirectory: () => false })).toBe(true)
+    }
   })
 
   it('keeps local agent tooling out of app.asar', () => {
@@ -267,6 +263,23 @@ describe('electron-builder config', () => {
     ])
   })
 
+  // Why: serve-sim's addon is a Mach-O, and Windows signing rejects every *.node that is not PE.
+  it('keeps serve-sim out of the Windows and Linux runtime closures', () => {
+    const {
+      PACKAGED_RUNTIME_PACKAGE_ROOTS,
+      createPackagedRuntimeNodeModuleResources
+    } = require('../packaged-runtime-node-modules.cjs')
+    expect(PACKAGED_RUNTIME_PACKAGE_ROOTS).not.toContain('serve-sim')
+    const serveSimTarget = join('node_modules', 'serve-sim')
+    expect(createPackagedRuntimeNodeModuleResources('linux').map((r) => r.to)).not.toContain(
+      serveSimTarget
+    )
+    expect(electronBuilderConfig.linux.extraResources.map((r) => r.to)).not.toContain(
+      serveSimTarget
+    )
+    expect(electronBuilderConfig.win.extraResources.map((r) => r.to)).not.toContain(serveSimTarget)
+  })
+
   // Why: the Windows CLI shim is delivered only via extraResources to
   // resources/bin/orca.cmd (beside the native resources/bin/orca.exe). If the
   // source tree is also packed into app.asar it gets extracted by
@@ -319,20 +332,26 @@ describe('electron-builder config', () => {
 
   it('unpacks the compiled CommonJS boundary with CLI runtime files', () => {
     expect(electronBuilderConfig.asarUnpack).toEqual(
-      expect.arrayContaining(['out/package.json', 'out/cli/**', 'out/shared/**'])
+      expect.arrayContaining([
+        'out/package.json',
+        'out/cli/**',
+        'out/shared/**',
+        'out/main/claude-accounts/keychain.js'
+      ])
     )
-    expect(isUnpacked('out/main/claude-accounts/keychain.js')).toBe(true)
   })
 
   // Why: without the unpacked entry the watcher client silently falls back to
   // in-process @parcel/watcher, reintroducing the #7547 main-process crash.
   it('unpacks the forked parcel-watcher process entry', () => {
-    expect(isUnpacked('out/main/parcel-watcher-process-entry.js')).toBe(true)
+    expect(electronBuilderConfig.asarUnpack).toEqual(
+      expect.arrayContaining(['out/main/parcel-watcher-process-entry.js'])
+    )
   })
 
   it('unpacks the replaceable WSL transcript filesystem process entry', async () => {
     const entryFilename = 'wsl-transcript-fs-process-entry.js'
-    expect(isUnpacked(`out/main/${entryFilename}`)).toBe(true)
+    expect(electronBuilderConfig.asarUnpack).toContain(`out/main/${entryFilename}`)
 
     const viteConfig = await readFile(join(REPO_ROOT, 'electron.vite.config.ts'), 'utf8')
     expect(viteConfig).toMatch(new RegExp(`'${entryFilename.replace(/\.js$/, '')}':\\s*resolve\\(`))
@@ -342,15 +361,17 @@ describe('electron-builder config', () => {
   // invisible to it and a packed worker entry fails closed — dropping every
   // OpenCode session in packaged builds while dev stays green. Three legs must
   // agree on the filename, so all three are read rather than hardcoded.
-  it('unpacks the OpenCode SQLite worker entry the scanner service forks', async () => {
-    const spawnSource = await readFile(
-      join(SRC_MAIN_DIR, 'ai-vault', 'session-scanner-opencode-sqlite-worker-spawn.ts'),
+  it('unpacks the foreign SQLite reader entry the scanner service runs OpenCode reads on', async () => {
+    const entryPathSource = await readFile(
+      join(SRC_MAIN_DIR, 'foreign-sqlite-readers', 'foreign-sqlite-reader-entry-path.ts'),
       'utf8'
     )
-    const entryFilename = spawnSource.match(/WORKER_ENTRY_FILENAME = '([^']+)'/)?.[1]
+    const entryFilename = entryPathSource.match(
+      /FOREIGN_SQLITE_READER_ENTRY_FILENAME = '([^']+)'/
+    )?.[1]
 
     expect(entryFilename).toBeDefined()
-    expect(isUnpacked(`out/main/${entryFilename}`)).toBe(true)
+    expect(electronBuilderConfig.asarUnpack).toContain(`out/main/${entryFilename}`)
 
     // Why: the emitted path comes from the rollup input key under
     // entryFileNames '[name].js', not from the source filename — renaming the
@@ -359,6 +380,12 @@ describe('electron-builder config', () => {
     const viteConfig = await readFile(join(REPO_ROOT, 'electron.vite.config.ts'), 'utf8')
     expect(viteConfig).toContain("entryFileNames: '[name].js'")
     expect(viteConfig).toMatch(new RegExp(`'${entryFilename.replace(/\.js$/, '')}':\\s*resolve\\(`))
+  })
+
+  it('keeps the worker-thread hang watchdog inside app.asar', () => {
+    expect(electronBuilderConfig.asarUnpack).not.toContain(
+      'out/main/main-thread-hang-watchdog-entry.js'
+    )
   })
 
   it('uses the multi-size icon source for Linux packages', () => {
@@ -538,7 +565,7 @@ describe('arch-aware packaging guard', () => {
   const OTHER_ARCH = process.arch === 'arm64' ? 1 : 3
   const OTHER_ARCH_NAME = process.arch === 'arm64' ? 'x64' : 'arm64'
   const SHERPA_PLATFORM = process.platform === 'win32' ? 'win' : process.platform
-  const otherSherpa = `sherpa-onnx-${SHERPA_PLATFORM}-${process.platform === 'win32' ? 'x64' : OTHER_ARCH_NAME}`
+  const otherSherpa = `sherpa-onnx-${SHERPA_PLATFORM}-${OTHER_ARCH_NAME}`
 
   // beforePack also hash-verifies the mobile web bundle, which the unit-test job never builds.
   // Point it at a real bundle built into a temp dir: these tests are about the native-variant
@@ -569,18 +596,8 @@ describe('arch-aware packaging guard', () => {
       require('../../package.json').optionalDependencies,
       otherSherpa
     )
-    const otherWatcherVariants = Object.keys(
-      require('@parcel/watcher/package.json').optionalDependencies ?? {}
-    ).filter((name) => name.startsWith(`@parcel/watcher-${process.platform}-${OTHER_ARCH_NAME}`))
-    const missingWatcher =
-      otherWatcherVariants.length > 0 &&
-      !otherWatcherVariants.some((name) =>
-        existsSync(join(REPO_ROOT, 'node_modules', name, 'package.json'))
-      )
-    if ((otherSherpaExpected && !otherSherpaInstalled) || missingWatcher) {
-      expect(() => packHost(OTHER_ARCH)).toThrow(
-        missingWatcher ? otherWatcherVariants[0] : otherSherpa
-      )
+    if (otherSherpaExpected && !otherSherpaInstalled) {
+      expect(() => packHost(OTHER_ARCH)).toThrow(otherSherpa)
       expect(() => packHost(OTHER_ARCH)).toThrow('pnpm install:release')
       expect(() => packHost(HOST_ARCH)).not.toThrow()
     } else {

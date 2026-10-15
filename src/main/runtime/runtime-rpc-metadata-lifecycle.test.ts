@@ -26,6 +26,39 @@ vi.mock('../git/worktree', () => {
 })
 
 describe('OrcaRuntimeRpcServer', () => {
+  it('bounds a stuck dismissal flush and still reports transport stop failure', async () => {
+    const runtime = new OrcaRuntimeService()
+    const flushing = vi
+      .spyOn(runtime, 'flushMobileNotificationDismissals')
+      .mockImplementation(() => new Promise(() => {}))
+    const server = new OrcaRuntimeRpcServer({
+      runtime,
+      userDataPath: mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-')),
+      enableWebSocket: false
+    })
+    server['activeTransports'] = [
+      {
+        start: vi.fn(async () => {}),
+        stop: vi.fn(async () => {
+          throw new Error('transport stop failed')
+        })
+      }
+    ]
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.useFakeTimers()
+    try {
+      const result = expect(server.stop()).rejects.toThrow('transport stop failed')
+      await vi.advanceTimersByTimeAsync(2_001)
+      await result
+      expect(flushing).toHaveBeenCalledOnce()
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('did not finish'))
+    } finally {
+      vi.useRealTimers()
+      flushing.mockRestore()
+      warning.mockRestore()
+    }
+  })
+
   it('writes runtime metadata with transport details when started', async () => {
     const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
     const runtime = new OrcaRuntimeService()

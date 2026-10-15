@@ -85,6 +85,19 @@ describe('tui agent startup plans', () => {
     expect(plan?.launchCommand).toBe("claude 'fix Bob''s \"quoted\" branch'")
   })
 
+  // Why: a typed line break submits early, and PowerShell 5.1 without PSReadLine then hangs at `>>`.
+  it('keeps a multi-line PowerShell launch on one physical line', () => {
+    const plan = buildAgentStartupPlan({
+      agent: 'claude',
+      prompt: 'first line\nsecond $line',
+      cmdOverrides: {},
+      platform: 'win32'
+    })
+
+    expect(plan?.launchCommand).not.toMatch(/[\r\n]/)
+    expect(plan?.launchCommand).toBe('claude "first line`nsecond `$line"')
+  })
+
   it('invokes fully quoted argv commands in PowerShell', () => {
     expect(buildShellCommandFromArgv(['codex', 'resume', 's1'], 'powershell')).toBe(
       "& 'codex' 'resume' 's1'"
@@ -443,7 +456,7 @@ describe('tui agent startup plans', () => {
       platform: 'win32'
     })
 
-    expect(plan?.launchCommand).toBe("codex 'resume' 's1'")
+    expect(plan?.launchCommand).toBe("codex --no-alt-screen '--cd' '.' 'resume' 's1'")
     expect(plan?.startupCommandDelivery).toBe('shell-ready')
   })
 
@@ -489,7 +502,7 @@ describe('tui agent startup plans', () => {
       platform: 'linux'
     })
 
-    expect(plan?.launchCommand).toBe("codex --profile work 'resume' 's1'")
+    expect(plan?.launchCommand).toBe("codex --profile work '--cd' '.' 'resume' 's1'")
   })
 
   it('uses a captured launch command when building resume plans after overrides change', () => {
@@ -501,7 +514,7 @@ describe('tui agent startup plans', () => {
       platform: 'linux'
     })
 
-    expect(plan?.launchCommand).toBe("codex --profile captured 'resume' 's1'")
+    expect(plan?.launchCommand).toBe("codex --profile captured '--cd' '.' 'resume' 's1'")
     expect(plan?.launchConfig).toEqual({
       agentCommand: 'codex --profile captured',
       agentArgs: '',
@@ -733,6 +746,22 @@ describe('tui agent startup plans', () => {
         platform: 'win32'
       })
     ).toBeNull()
+  })
+
+  it('launches Rovo Dev as an acli subcommand and types the prompt after start', () => {
+    // `acli rovodev run <instruction>` is one-shot, so the prompt must not ride argv.
+    const plan = buildAgentStartupPlan({
+      agent: 'rovo',
+      prompt: 'fix it',
+      cmdOverrides: {},
+      agentArgs: resolveTuiAgentLaunchArgs('rovo', null),
+      platform: 'linux'
+    })
+    expect(plan).toMatchObject({
+      launchCommand: "acli rovodev run '--yolo'",
+      expectedProcess: 'acli',
+      followupPrompt: 'fix it'
+    })
   })
 
   it('launches Devin with stdin-after-start prompt delivery', () => {

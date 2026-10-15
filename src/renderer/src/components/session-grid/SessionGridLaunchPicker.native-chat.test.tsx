@@ -64,7 +64,7 @@ function launchChat() {
     settle = resolve
   })
   harness.launch.mockReturnValue({
-    surface: { kind: 'local-agent-session', tabId: 'chat-tab', sessionId: 'new-chat' },
+    surface: { kind: 'host-published' },
     structuredSettlement
   })
   render(

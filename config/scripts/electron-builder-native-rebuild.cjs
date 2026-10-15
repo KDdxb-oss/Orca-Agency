@@ -31,6 +31,14 @@ function buildNativeRebuildArgs(
 ) {
   const platform = readPlatformName(context?.platform)
   const arch = readArchName(context?.arch)
+  if (
+    platform === 'win32' &&
+    (environment.ORCA_WINDOWS_ARM64_PACKAGE === '1') !== (arch === 'arm64')
+  ) {
+    throw new Error(
+      'Windows ARM64 packaging requires ORCA_WINDOWS_ARM64_PACKAGE=1 and --arm64 together'
+    )
+  }
   const canReusePreparedRuntime =
     environment.ORCA_REUSE_PREPARED_NATIVE_RUNTIME === '1' &&
     platform === hostPlatform &&

@@ -3,6 +3,7 @@ import { TERMINAL_SCROLLBACK_SESSION_HOMES } from '../../../../shared/workspace-
 import {
   resolveLeafScrollbackBuffers,
   resolveTabScrollbackBuffers,
+  withoutLeafScrollbackBuffer,
   type TerminalScrollbackSessionHomes
 } from './leaf-scrollback-resolution'
 
@@ -36,6 +37,16 @@ describe.each(TERMINAL_SCROLLBACK_SESSION_HOMES)('resolveTabScrollbackBuffers re
       'leaf-1': home === 'terminalLayoutsByTabId' ? 'from-shared' : 'from-local-only'
     })
     expect(resolveTabScrollbackBuffers(sessionWithBytesOnlyIn[home], 'tab-other')).toBeUndefined()
+  })
+})
+
+describe('withoutLeafScrollbackBuffer', () => {
+  it('removes only the cleared pane and retains sibling scrollback', () => {
+    const buffers = { first: 'cleared', second: 'retained' }
+    const result = withoutLeafScrollbackBuffer(buffers, 'first')
+    expect(result).toEqual({ second: 'retained' })
+    expect(buffers).toEqual({ first: 'cleared', second: 'retained' })
+    expect(withoutLeafScrollbackBuffer(result, 'second')).toEqual({})
   })
 })
 

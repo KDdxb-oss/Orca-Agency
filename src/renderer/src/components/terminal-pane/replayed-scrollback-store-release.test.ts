@@ -20,7 +20,7 @@ const RUNTIME_REPO: RepoConnection = {
 const REPOS = [LOCAL_REPO, SSH_REPO, RUNTIME_REPO]
 
 describe('canReleaseReplayedScrollbackFromStore', () => {
-  it("releases ref-backed and remote-repo replays but keeps a local worktree's only copy", () => {
+  it('releases ref-backed replays but keeps every sole copy through startup remounts', () => {
     expect(
       canReleaseReplayedScrollbackFromStore({
         hasScrollbackRefs: true,
@@ -34,14 +34,14 @@ describe('canReleaseReplayedScrollbackFromStore', () => {
         worktreeId: 'ssh-repo::/ssh/worktree',
         repos: REPOS
       })
-    ).toBe(true)
+    ).toBe(false)
     expect(
       canReleaseReplayedScrollbackFromStore({
         hasScrollbackRefs: false,
         worktreeId: 'runtime-repo::/runtime/worktree',
         repos: REPOS
       })
-    ).toBe(true)
+    ).toBe(false)
     expect(
       canReleaseReplayedScrollbackFromStore({
         hasScrollbackRefs: false,
@@ -51,13 +51,13 @@ describe('canReleaseReplayedScrollbackFromStore', () => {
     ).toBe(false)
   })
 
-  it('releases for an unhydrated repo catalog, matching the capture guard that re-mints it', () => {
+  it('keeps the copy while the repo catalog has not hydrated', () => {
     expect(
       canReleaseReplayedScrollbackFromStore({
         hasScrollbackRefs: false,
         worktreeId: 'unknown-repo::/maybe-remote/worktree',
         repos: REPOS
       })
-    ).toBe(true)
+    ).toBe(false)
   })
 })

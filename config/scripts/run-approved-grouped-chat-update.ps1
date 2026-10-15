@@ -5,10 +5,13 @@ $previewInstall = [bool]$WhatIfPreference
 $WhatIfPreference = $false
 $target = "$env:LOCALAPPDATA\Programs\orca"
 $exe = Join-Path $target 'Orca.exe'
-$node = Join-Path (Split-Path -Parent $PSScriptRoot) 'toolchain\node-v24.14.0-win-x64\node.exe'
+$toolchainRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'toolchain'
 $installer = Join-Path $PSScriptRoot 'install-chat-sidebar-candidate.ps1'
 $frozenManifestPath = Join-Path $PSScriptRoot 'chat-sidebar-final-package-manifest.json'
 $frozenManifest = Get-Content -LiteralPath $frozenManifestPath -Raw | ConvertFrom-Json
+if ((Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'select-reviewed-orca-inspector.ps1')).Hash -ne $frozenManifest.rolloutInspectorSelectorSha256) {
+    throw 'Reviewed inspector architecture selector hash mismatch.'
+}
 if ((Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash -ne $frozenManifest.rolloutScriptSha256) {
     throw 'Reviewed rollout script hash mismatch.'
 }
@@ -32,12 +35,15 @@ if ((Get-FileHash -LiteralPath $desktopLifecycle).Hash -ne $frozenManifest.insta
     throw 'Reviewed desktop lifecycle hash mismatch.'
 }
 . $desktopLifecycle
+. (Join-Path $PSScriptRoot 'select-reviewed-orca-inspector.ps1')
+$node = Get-ReviewedInspectorNode $exe $toolchainRoot $frozenManifest.rolloutInspectorNodeSha256
 
 function Start-IndependentOrca {
     param([string] $ExpectedVersion = [string]$frozenManifest.packageVersion)
+    $restartNode = Get-ReviewedInspectorNode $exe $toolchainRoot $frozenManifest.rolloutInspectorNodeSha256
     # WMI keeps the restart outside this terminal's kill-on-close job.
     $launch = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-        CommandLine = '"' + $exe + '" --remote-debugging-address=127.0.0.1 --remote-debugging-port=19387'
+        CommandLine = '"' + $exe + '" --orca-main-thread-diagnostics --remote-debugging-address=127.0.0.1 --remote-debugging-port=19387'
         CurrentDirectory = $target
     }
     if ($launch.ReturnValue -ne 0) { throw "Desktop restart failed with Windows result $($launch.ReturnValue). App files remain intact." }
@@ -50,24 +56,32 @@ function Start-IndependentOrca {
         }
     } finally { $started.Dispose() }
     $restartedIdentity = $null
-    $identityDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    $identityDeadline = [DateTime]::UtcNow.AddSeconds(90)
     while ([DateTime]::UtcNow -lt $identityDeadline) {
         # Electron may not accept the debug signal immediately after Windows creates it.
-        try { & $node -e 'process._debugProcess(Number(process.argv[1]))' $launch.ProcessId 2>$null } catch {
+        try { & $restartNode -e 'process._debugProcess(Number(process.argv[1]))' $launch.ProcessId 2>$null } catch {
             # Windows PowerShell can promote early native stderr to a terminating error.
         }
-        try { $identityJson = & $node $inspector 2>$null } catch { $identityJson = $null }
+        try { $identityJson = & $restartNode $inspector 2>$null } catch { $identityJson = $null }
         if ($LASTEXITCODE -eq 0 -and $identityJson) {
             $restartedIdentity = ($identityJson | ConvertFrom-Json).result.result.value
-            if ($restartedIdentity.pid -eq $launch.ProcessId) { break }
+            if ($restartedIdentity.pid -eq $launch.ProcessId -and
+                [string]::Equals($restartedIdentity.exe, $exe, [StringComparison]::OrdinalIgnoreCase) -and
+                $restartedIdentity.version -eq $ExpectedVersion -and
+                [string]::Equals($restartedIdentity.userData, (Join-Path $env:APPDATA 'orca'), [StringComparison]::OrdinalIgnoreCase) -and
+                @($restartedIdentity.windows | Where-Object { $_.visible -and -not $_.destroyed -and $_.url -match '/out/renderer/index\.html$' }).Count) { break }
         }
         Start-Sleep -Milliseconds 500
     }
     if (-not $restartedIdentity -or $restartedIdentity.pid -ne $launch.ProcessId -or
+        -not [string]::Equals($restartedIdentity.exe, $exe, [StringComparison]::OrdinalIgnoreCase) -or
         $restartedIdentity.version -ne $ExpectedVersion -or
-        -not [string]::Equals($restartedIdentity.userData, (Join-Path $env:APPDATA 'orca'), [StringComparison]::OrdinalIgnoreCase)) {
+        -not [string]::Equals($restartedIdentity.userData, (Join-Path $env:APPDATA 'orca'), [StringComparison]::OrdinalIgnoreCase) -or
+        -not @($restartedIdentity.windows | Where-Object { $_.visible -and -not $_.destroyed -and $_.url -match '/out/renderer/index\.html$' }).Count) {
+        Write-Warning ('Restart identity was not proven: ' + (@{expectedPid=$launch.ProcessId; expectedVersion=$ExpectedVersion; observed=$restartedIdentity} | ConvertTo-Json -Depth 6 -Compress))
         $restartReporters = @(Get-ReviewedInstallProcesses $exe | Where-Object { Test-ReviewedCrashReporter $_ })
         $env:ORCA_DESKTOP_QUIT_PID = [string]$launch.ProcessId
+        $env:ORCA_CLOSE_THROUGH_MAIN_PROCESS = '1'
         & $node $closeHelper
         if ($LASTEXITCODE -ne 0) { throw 'Restart profile verification failed, and graceful recovery close failed. Complete app backups remain intact.' }
         Wait-ReviewedDesktopClosed $exe $launch.ProcessId $restartReporters
@@ -84,6 +98,17 @@ if ($previewInstall) {
 
 if (-not $AuthorizedRestart) {
     throw 'Pass AuthorizedRestart only after the reviewed package is ready and Brooks has authorized this desktop restart.'
+}
+$installationPolicyPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'automation\installation-policy.json'
+if (Test-Path -LiteralPath $installationPolicyPath) {
+    $installationPolicy = Get-Content -LiteralPath $installationPolicyPath -Raw | ConvertFrom-Json
+    $candidateHold = $installationPolicy.currentManualCandidateHold
+    if ($candidateHold.requiresNewGoAhead -and (
+        $candidateHold.packageVersion -eq $frozenManifest.packageVersion -or
+        ($candidateHold.appliesToSupersedingCandidates -and
+         [version]$frozenManifest.packageVersion -ge [version]$candidateHold.packageVersion))) {
+        throw 'Brooks paused this candidate installation. Record his new go-ahead before closing or changing Orca.'
+    }
 }
 $desktops = @(Get-Process -Name Orca -ErrorAction SilentlyContinue | Where-Object {
     $_.Path -eq $exe -and $_.MainWindowHandle -ne 0
@@ -132,15 +157,9 @@ try {
     $crashReporters = @(Get-ReviewedInstallProcesses $exe | Where-Object {
         Test-ReviewedCrashReporter $_
     })
-    $foreignProcesses = @(Get-ReviewedInstallProcesses $exe | Where-Object {
-        -not (Test-ReviewedCrashReporter $_) -and $_.ProcessId -ne $desktopId -and
-        $_.ParentProcessId -ne $desktopId
-    })
-    if ($foreignProcesses.Count) { throw 'Another process uses the installed executable; no desktop was closed.' }
-    $debugListeners = @(Get-NetTCPConnection -LocalPort 19387 -State Listen -ErrorAction SilentlyContinue)
-    if (@($debugListeners | Where-Object { $_.OwningProcess -ne $desktopId }).Count) {
-        throw 'Renderer debug port belongs to a different process; no desktop was closed.'
-    }
+    Wait-ReviewedDesktopExclusiveUse $exe $desktopId
+    $env:ORCA_CLOSE_THROUGH_MAIN_PROCESS = '1'
+    Write-Host 'Using the PID-verified main-process close route.'
     $env:ORCA_DESKTOP_QUIT_PID = [string]$desktopId
     Write-Host 'Staging is verified. Closing Orca now; it will reopen after the directory switch.'
     $closeState.Requested = $true
@@ -167,6 +186,7 @@ try {
             throw "Frozen package hash mismatch: $($file.Path); no desktop was closed."
         }
     }
+    Get-ReviewedInspectorNode (Join-Path $frozenPackageRoot 'Orca.exe') $toolchainRoot $frozenManifest.rolloutInspectorNodeSha256 | Out-Null
     & $installer -BeforeReplace $closeAfterStaging -AfterReplace $verifyAndRestart
     [ordered]@{
         installedAt=(Get-Date).ToUniversalTime().ToString('o')
@@ -189,5 +209,6 @@ try {
     throw
 } finally {
     Remove-Item Env:ORCA_DESKTOP_QUIT_PID -ErrorAction SilentlyContinue
+    Remove-Item Env:ORCA_CLOSE_THROUGH_MAIN_PROCESS -ErrorAction SilentlyContinue
     Stop-Transcript | Out-Null
 }

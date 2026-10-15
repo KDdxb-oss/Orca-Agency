@@ -73,6 +73,7 @@ export function writeTerminalOutputImpl(
       queuedByTerminal.set(terminal, queued)
       enqueueChunk(queued, data, {
         foreground: true,
+        latencySensitive: options.latencySensitive,
         forceForegroundRefresh: options.forceForegroundRefresh,
         followupForegroundRefresh: options.followupForegroundRefresh,
         shouldRefreshForegroundSynchronously: options.shouldRefreshForegroundSynchronously,
@@ -141,6 +142,7 @@ export function writeTerminalOutputImpl(
       entry.highPriority = true
       enqueueChunk(entry, data, {
         foreground: true,
+        latencySensitive: options.latencySensitive,
         forceForegroundRefresh: options.forceForegroundRefresh,
         followupForegroundRefresh: options.followupForegroundRefresh,
         shouldRefreshForegroundSynchronously: options.shouldRefreshForegroundSynchronously,
@@ -171,6 +173,7 @@ export function writeTerminalOutputImpl(
       }
       enqueueChunk(queued, data, {
         foreground: true,
+        latencySensitive: options.latencySensitive,
         forceForegroundRefresh: options.forceForegroundRefresh,
         followupForegroundRefresh: options.followupForegroundRefresh,
         shouldRefreshForegroundSynchronously: options.shouldRefreshForegroundSynchronously,

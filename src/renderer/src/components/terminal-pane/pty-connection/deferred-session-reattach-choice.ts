@@ -20,6 +20,11 @@ import type { ConnectPanePtySession } from './connect-pane-pty-session'
 import { savedTabResume } from './saved-tab-resume'
 
 export function runDeferredSessionReattachChoice(session: ConnectPanePtySession): void {
+  // An explicit replacement owns its startup; saved recovery state must not substitute another agent.
+  if (session.pendingReplacedPtyId) {
+    session.startFreshSpawn()
+    return
+  }
   // Why: re-read session IDs here rather than at connect scheduling — cleanup during the caller's one-frame gap could otherwise reattach a dead session.
   const restoredPtyId =
     session.deps.restoredLeafId && session.deps.restoredPtyIdByLeafId

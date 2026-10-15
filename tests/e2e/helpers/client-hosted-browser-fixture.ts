@@ -4,6 +4,7 @@ import type { Page } from '@stablyai/playwright-test'
 import { expect } from './orca-app'
 import { readRestartRendererState } from './orca-restart'
 import type { PairedElectronClient } from './paired-electron-client'
+import { normalizeRuntimePathForComparison } from '../../../src/shared/cross-platform-path'
 
 /**
  * Shared scaffolding for the client-hosted browser survival specs.
@@ -65,15 +66,18 @@ export type MirroredBrowserPage = {
 }
 
 export async function findPairedWorktreeId(page: Page, repoPath: string): Promise<string | null> {
-  return readRestartRendererState(() =>
+  const worktrees = await readRestartRendererState(() =>
     page.evaluate(
-      (path) =>
+      () =>
         window.__store
           ?.getState()
           .allWorktrees()
-          .find((worktree) => worktree.path === path)?.id ?? null,
-      repoPath
+          .map(({ id, path }) => ({ id, path })) ?? []
     )
+  )
+  const target = normalizeRuntimePathForComparison(repoPath)
+  return (
+    worktrees.find(({ path }) => normalizeRuntimePathForComparison(path) === target)?.id ?? null
   )
 }
 

@@ -4,6 +4,7 @@ import { PreviewPhaseOverlay, type PreviewPhase } from './preview-terminal-phase
 
 export function PreviewTerminalSurface({
   containerRef,
+  fileDropRef,
   className,
   background,
   phase,
@@ -12,6 +13,7 @@ export function PreviewTerminalSurface({
   hasWorkspace
 }: {
   containerRef: RefObject<HTMLDivElement | null>
+  fileDropRef?: (root: HTMLElement | null) => void
   className?: string
   background?: string
   phase: PreviewPhase
@@ -29,6 +31,7 @@ export function PreviewTerminalSurface({
     >
       <PreviewPhaseOverlay phase={phase} ptyId={ptyId} ptyGone={ptyGone} background={background} />
       <div
+        ref={fileDropRef}
         aria-hidden={ptyGone || undefined}
         data-native-file-drop-target={hasWorkspace ? 'rejected' : undefined}
         className={cn('flex h-full w-full items-end overflow-hidden', ptyGone && 'invisible')}

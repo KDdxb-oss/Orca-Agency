@@ -31,7 +31,10 @@ export async function discardEmptyChatWorkspace(workspace: Worktree): Promise<vo
 }
 
 /** A separate view of the same folder, not a new process or a copied conversation. */
-export async function createSeparateChatWorkspace(row: ChatSidebarRow): Promise<Worktree> {
+export async function createSeparateChatWorkspace(
+  row: ChatSidebarRow,
+  options: { useSourceWhenUngrouped?: boolean } = {}
+): Promise<Worktree> {
   const state = useAppStore.getState()
   const folder = row.folderWorktree ?? row.worktree
   const groupId =
@@ -46,6 +49,9 @@ export async function createSeparateChatWorkspace(row: ChatSidebarRow): Promise<
             normalizeRuntimePathForComparison(folder.path)))
   )
   if (!group) {
+    if (options.useSourceWhenUngrouped) {
+      return row.worktree
+    }
     throw new Error('This chat needs a folder before it can be moved to a separate workspace.')
   }
   const host = parseExecutionHostId(row.hostId)

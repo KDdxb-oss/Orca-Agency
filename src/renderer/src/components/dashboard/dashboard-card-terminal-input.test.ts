@@ -143,11 +143,20 @@ describe('resolveDashboardCardTerminalInput', () => {
 
   it('relays Windows input-record paste encoding for a confirmed remote Codex pane', () => {
     const profile = resolveDashboardCardTerminalInput(
+      // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: This fixture supplies only the runtime fields read by the resolver.
       stateWith({
         runtimeStatusByEnvironmentId: new Map([
           ['windows-box', { status: { hostPlatform: 'win32' } }]
         ]),
-        agentStatusByPaneKey: { [MAC_ARGS.paneKey]: codexEntry() }
+        agentStatusByPaneKey: { [MAC_ARGS.paneKey]: codexEntry() },
+        paneForegroundAgentByPaneKey: {
+          [MAC_ARGS.paneKey]: {
+            agent: 'codex',
+            agentEvidence: 'process-read',
+            routingTrusted: true,
+            shellForeground: false
+          }
+        }
       } as unknown as Partial<DashboardCardTerminalInputState>),
       { ...MAC_ARGS, ptyId: 'remote:windows-box@@pty-1' }
     )

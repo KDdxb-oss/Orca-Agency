@@ -58,10 +58,6 @@ export function isCursorAgentOrchestrationTarget(
   return [leaf.lastOscTitle, leaf.paneTitle, tabTitle].some(isCursorAgentTitle)
 }
 
-export const AGENT_SESSION_OPERATION_PER_CLIENT_LIMIT = 512
-
-export const AGENT_SESSION_OPERATION_GLOBAL_LIMIT = 4_096
-
 // Why: long enough for a phone to reconnect and retry a create whose response
 // was lost, short enough that an intentional later re-resume forks fresh.
 export const MOBILE_TERMINAL_CREATE_RESULT_TTL_MS = 60_000
@@ -99,7 +95,11 @@ export const PROVEN_ABSENT_LEAF_PTY_TTL_MS = 15_000
 
 export const TERMINAL_INTERACTIVE_WAIT_PROBE_TIMEOUT_MS = 2_000
 
-export type RuntimeTerminalProjection = { lines: string[]; draft?: string }
+export type RuntimeTerminalProjection = {
+  lines: string[]
+  draft?: string
+  composerState?: 'empty' | 'draft' | 'unknown'
+}
 
 export function assertAgentPromptRequestActive(signal?: AbortSignal): void {
   if (signal?.aborted) {

@@ -53,10 +53,6 @@ export function restoreTerminalPaneLayout(args: {
     if (initialLayoutHadBuffers) {
       useAppStore.getState().setTabLayout(tabId, layoutWithoutRestoredBuffers)
     }
-    // Same release for the local-only home: xterm owns the bytes now and the next park re-captures.
-    if (localOnlyBuffers) {
-      useAppStore.getState().setTabLocalOnlyScrollback(tabId, null)
-    }
   }
   const restoredTitles = mapRestoredPaneTitlesByPaneId(
     initialLayoutRef.current.titlesByLeafId,

@@ -28,6 +28,13 @@ const {
 const {
   verifyPackagedWindowsNodePty
 } = require('./scripts/verify-packaged-node-pty-job-ownership.cjs')
+const {
+  assertOrcadTemplateBuilt,
+  finalizePackagedOrcadTemplate,
+  orcadTemplateExtraResource,
+  orcadTemplateNodeModulesExtraResource,
+  orcadTemplateMacSignIgnore
+} = require('./scripts/packaged-orcad-template.cjs')
 const { verifySkillsCliRuntime } = require('./scripts/verify-skills-cli-runtime.cjs')
 const { verifyStaticAppImagePackage } = require('./scripts/static-appimage-package-contract.cjs')
 const { signWindowsUninstallerViaSignPath } = require('./scripts/windows-uninstaller-signing.cjs')
@@ -49,6 +56,7 @@ const isWinAdhoc = process.env.ORCA_WIN_ADHOC === '1'
 const isWinDevChannel = isWinHourly || isWinDaily || isWinAdhoc
 const isMacRelease = process.env.ORCA_MAC_RELEASE === '1' || isMacHourly || isMacDaily || isMacAdhoc
 const isLinuxArm64Release = process.env.ORCA_LINUX_ARM64_RELEASE === '1'
+const isWindowsArm64Package = process.env.ORCA_WINDOWS_ARM64_PACKAGE === '1'
 const localBuildVersion =
   isMacRelease || isWinDevChannel ? undefined : process.env.ORCA_LOCAL_BUILD_VERSION
 const isHourlyChannel = isMacHourly || isWinHourly
@@ -85,6 +93,12 @@ const skillFreshnessResources = {
   from: 'resources/skills',
   to: 'skills'
 }
+// Why a real directory: native-chat agents load this skill plugin by path (Claude --plugin-dir,
+// Codex skill roots), and neither can read inside app.asar.
+const nativeChatVisualsResource = {
+  from: 'resources/native-chat-visuals',
+  to: 'native-chat-visuals'
+}
 // Why: SSH relay deploy resolves bundles from process.resourcesPath in packaged
 // apps. Keeping relay assets as extraResources makes them real directories
 // instead of paths hidden inside app.asar.
@@ -111,9 +125,12 @@ const emojiShortcodeDatasetResource = {
 }
 const commonExtraResources = [
   relayExtraResource,
+  orcadTemplateExtraResource,
+  orcadTemplateNodeModulesExtraResource,
   ...bundledRipgrepExtraResources,
   bundledPluginResources,
   skillFreshnessResources,
+  nativeChatVisualsResource,
   emojiShortcodeDatasetResource
 ]
 // Why: native speech addons must be real files outside app.asar; copy only the
@@ -155,9 +172,10 @@ const rpmElectronRuntimeDependencies = [
 ]
 
 // Why mirrored, not imported: this config is CJS loaded by electron-builder outside the TS build.
-// Keep in sync with isMarkdownDocumentName() in src/main/ipc/markdown-documents.ts and with
+// Keep in sync with isOsOpenedDocumentName() in src/main/startup/os-opened-documents.ts and with
 // config/nsis/orca-installer-hooks.nsh, which registers the same set on Windows.
 const MARKDOWN_FILE_EXTENSIONS = ['md', 'markdown', 'mdx']
+const TABULAR_FILE_EXTENSIONS = ['csv', 'tsv']
 
 // Why: the config must load on a host-only install without resolving unused Windows addons.
 // This is load-time tolerance only; beforePack enforces that the target's natives are installed.
@@ -189,9 +207,15 @@ module.exports = {
     // extraResources. Shipping them in app.asar bloats the desktop bundle.
     '!src{,/**/*}',
     '!out/orcad{,/**/*}',
-    '!out/orcad-template{,/**/*}',
+    // Never in app.asar: the template ships via orcadTemplateExtraResource; prebuilds are build inputs.
+    '!out/orcad-*{,/**/*}',
     '!out/.orcad-*{,/**/*}',
+    // Why: the pinned Node a local orcad build references (~120 MB) and its download cache.
+    '!out/runtimes{,/**/*}',
+    '!out/node-runtime-cache{,/**/*}',
     '!config{,/**/*}',
+    // Release archives and other build staging are not runtime resources.
+    '!.build{,/**/*}',
     '!docs{,/**/*}',
     '!mobile{,/**/*}',
     '!native{,/**/*}',
@@ -211,10 +235,7 @@ module.exports = {
     // package time never bloats app.asar.
     '!pr-evidence{,/**/*}',
     '!test-results{,/**/*}',
-    // Why: local packaging and native build leftovers can contain entire prior apps or
-    // node_modules trees. Neither is a runtime input for the packaged app.
     '!dist{,/**/*}',
-    '!.build{,/**/*}',
     // Local build logs and rollback copies are never application resources.
     '!notes{,/**/*}',
     // Why: local agent/tooling directories may contain worktree symlink loops;
@@ -245,6 +266,7 @@ module.exports = {
     // it from process.resourcesPath; exclude the source copy from app.asar.
     '!resources/onboarding/feature-wall/**',
     '!resources/skills/**',
+    '!resources/native-chat-visuals/**',
     // Why: bundled plugins ship via extraResources to resources/plugins/launch;
     // packing the source tree into app.asar would duplicate those exact bytes.
     '!resources/plugins/launch/**',
@@ -275,17 +297,41 @@ module.exports = {
   // before the GUI process starts, so those deps need the same treatment.
   // Why: out/package.json pins compiled output to CommonJS so parent
   // package.json files with type=module cannot change the packaged CLI loader.
-  // Why: the OpenCode SQLite worker entry is also spawned by the scanner
+  // Why: the foreign SQLite reader entry is also spawned by the scanner
   // service, which runs under ELECTRON_RUN_AS_NODE and so cannot see into
   // app.asar. Left packed, that spawn fails closed and every OpenCode session
-  // disappears from Agent Session History in packaged builds only. Electron
-  // redirects app.asar paths for worker-thread entries to their unpacked copies.
+  // disappears from Agent Session History in packaged builds only. Worker
+  // entries reached solely from the Electron main process stay packed, since
+  // asar redirects their app.asar paths.
   asarUnpack: [
     'out/package.json',
     'out/cli/**',
     'out/shared/**',
-    // The unbundled CLI reaches profile, SQLite and hook helpers across main; keep its full closure on disk.
+    // The packaged CLI reaches helpers across main outside app.asar.
     'out/main/**',
+    'out/main/agent-hooks/**',
+    'out/main/antigravity/**',
+    'out/main/claude/**',
+    'out/main/claude-accounts/keychain.js',
+    'out/main/codex/**',
+    'out/main/copilot/**',
+    'out/main/cursor/**',
+    'out/main/droid/**',
+    'out/main/gemini/**',
+    'out/main/gitlab/project-ref-parser.js',
+    'out/main/grok/**',
+    'out/main/hermes/**',
+    'out/main/orca-profiles/profile-index-store.js',
+    'out/main/persistence/profile-state/**',
+    'out/main/startup/http1-compatibility-marker.js',
+    'out/main/daemon-entry.js',
+    'out/main/session-scanner-service-entry.js',
+    'out/main/wsl-transcript-fs-process-entry.js',
+    'out/main/foreign-sqlite-reader-entry.js',
+    'out/main/plugin-host-entry.js',
+    'out/main/computer-sidecar.js',
+    'out/main/parcel-watcher-process-entry.js',
+    'out/main/chunks/**',
     'resources/**',
     'node_modules/ws/**',
     'node_modules/tweetnacl/**',
@@ -302,6 +348,7 @@ module.exports = {
   beforePack: (context, mobileWebBundleDir = MOBILE_WEB_BUNDLE_DIR) => {
     assertPackagedNativeVariantsInstalled(context.electronPlatformName, context.arch)
     assertBundledRipgrepInstalled()
+    assertOrcadTemplateBuilt()
     assertMobileWebBundleBuilt(mobileWebBundleDir)
   },
   afterPack: async (context) => {
@@ -390,8 +437,12 @@ module.exports = {
     // mapping fails packaging before bundled content reaches users.
     verifyPackagedPluginResources(resourcesDir)
     finalizePackagedRipgrep(resourcesDir)
+    await finalizePackagedOrcadTemplate(resourcesDir, {
+      platform: context.electronPlatformName,
+      signMacBinary: (path) =>
+        signMacStandaloneHelper(path, 'orcad template binary', context.packager)
+    })
     chmodUnixCliLaunchers(resourcesDir, context.electronPlatformName)
-    chmodMacServeSimHelpers(resourcesDir, context.electronPlatformName)
     for (const filename of readdirSync(resourcesDir)) {
       if (!filename.startsWith('agent-browser-')) {
         continue
@@ -442,7 +493,7 @@ module.exports = {
     extraResources: [
       ...commonExtraResources,
       ...windowsRuntimeResources,
-      winSpeechNativeResource,
+      ...(isWindowsArm64Package ? [] : [winSpeechNativeResource]),
       {
         from: 'resources/win32/bin/orca.cmd',
         to: 'bin/orca.cmd'
@@ -463,7 +514,9 @@ module.exports = {
     ]
   },
   nsis: {
-    artifactName: 'orca-windows-setup.${ext}',
+    artifactName: isWindowsArm64Package
+      ? 'orca-windows-arm64-setup.${ext}'
+      : 'orca-windows-setup.${ext}',
     shortcutName: '${productName}',
     uninstallDisplayName: '${productName}',
     createDesktopShortcut: 'always',
@@ -475,22 +528,30 @@ module.exports = {
     include: resolve(__dirname, 'nsis', 'orca-installer-hooks.nsh')
   },
   mac: {
-    // Why rank Alternate: Orca joins Finder's "Open With" list for Markdown without claiming
+    // Why rank Alternate: Orca joins Finder's "Open With" list without claiming
     // LSHandlerRank ownership, so whichever editor the user already prefers stays the default.
     // Why one entry per extension: app-builder-lib globs `*.${ext}`, which an array would break.
-    fileAssociations: MARKDOWN_FILE_EXTENSIONS.map((ext) => ({
-      ext,
-      name: 'Markdown Document',
-      description: 'Markdown Document',
-      role: 'Editor',
-      rank: 'Alternate'
-    })),
+    fileAssociations: [
+      ...MARKDOWN_FILE_EXTENSIONS.map((ext) => ({
+        ext,
+        name: 'Markdown Document',
+        description: 'Markdown Document',
+        role: 'Editor',
+        rank: 'Alternate'
+      })),
+      ...TABULAR_FILE_EXTENSIONS.map((ext) => ({
+        ext,
+        name: `${ext.toUpperCase()} Document`,
+        description: `${ext.toUpperCase()} Document`,
+        role: 'Editor',
+        rank: 'Alternate'
+      }))
+    ],
     icon: 'resources/build/icon.icns',
     entitlements: 'resources/build/entitlements.mac.plist',
     entitlementsInherit: 'resources/build/entitlements.mac.plist',
-    signIgnore: bundledRipgrepMacSignIgnore,
+    signIgnore: [...bundledRipgrepMacSignIgnore, ...orcadTemplateMacSignIgnore],
     extendInfo: {
-      // Why: retain the upstream safeStorage Keychain service across the Agency display-name change.
       CFBundleName: 'Orca',
       CFBundleDisplayName: 'Orca Agency',
       NSAppleEventsUsageDescription:
@@ -580,7 +641,7 @@ module.exports = {
     // override. A desktop entry's MimeType only adds a handler - mimeapps.list still owns the
     // default. .mdx is deliberately absent: Ubuntu 24.04's mime database maps it to
     // application/x-genesis-32x-rom, so claiming it here would need a glob override.
-    mimeTypes: ['text/markdown'],
+    mimeTypes: ['text/markdown', 'text/csv', 'text/tab-separated-values'],
     // Why: Ubuntu desktop ships GNOME Orca as the `orca` package and /usr/bin/orca.
     // The Linux installer should not claim those system package/file names.
     executableName: 'orca-ide',
@@ -702,23 +763,6 @@ function chmodUnixCliLaunchers(resourcesDir, electronPlatformName) {
     // Why: packaged Unix installs expose these extraResources as public shell
     // commands, and source/packager mode drift must not ship a non-executable CLI.
     chmodSync(launcherPath, 0o755)
-  }
-}
-
-function chmodMacServeSimHelpers(resourcesDir, electronPlatformName) {
-  if (electronPlatformName !== 'darwin') {
-    return
-  }
-  const helperPaths = [
-    join(resourcesDir, 'serve-sim', 'bin', 'serve-sim-bin'),
-    join(resourcesDir, 'serve-sim', 'dist', 'simcam', 'serve-sim-camera-helper'),
-    join(resourcesDir, 'node_modules', 'serve-sim', 'bin', 'serve-sim-bin'),
-    join(resourcesDir, 'node_modules', 'serve-sim', 'dist', 'simcam', 'serve-sim-camera-helper')
-  ]
-  for (const helperPath of helperPaths) {
-    if (existsSync(helperPath)) {
-      chmodSync(helperPath, 0o755)
-    }
   }
 }
 

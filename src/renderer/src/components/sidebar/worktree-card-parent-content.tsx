@@ -1,15 +1,13 @@
 import React from 'react'
 
 import { cn } from '@/lib/utils'
-import { useAppStore } from '@/store'
+import { getWorkspaceAttachments } from '../../../../shared/workspace-attachments'
 import { WorktreeCardHeader } from './worktree-card-header'
-import { canMarkWorkspaceDone } from './worktree-card-mark-done'
 import { WorktreeCardMetaRow } from './worktree-card-meta-row'
 import { WorktreeCardDetailsHover } from './WorktreeCardMeta'
 import { WorktreeCardPortsDetails } from './WorktreeCardPorts'
 import type { WorktreeCardPresentation } from './worktree-card-presentation'
 import { WorktreeCardSecondaryRows } from './worktree-card-secondary-rows'
-import { WorktreeCardStatusContext } from './worktree-card-status-context'
 import { WorktreeCardStatusSlot } from './WorktreeCardStatusSlot'
 import type { WorktreeCardController } from './use-worktree-card-controller'
 
@@ -30,10 +28,12 @@ export function WorktreeCardParentContent({
     stopQuickActionPointerPropagation,
     handleToggleUnreadQuick,
     statusLaneReview,
+    reviewChecks,
     branchIdentityDisplay,
     showInlineAgentList,
     titleRenaming,
     isDeleting,
+    referenceDetails,
     hoverIssue,
     hoverLinearIssue,
     hoverJiraIssue,
@@ -45,6 +45,7 @@ export function WorktreeCardParentContent({
     detailsHoverControl,
     handleRenameTitle,
     handleEditIssue,
+    handleManageLinks,
     handleEditComment,
     handleOpenGitHubIssueInOrca,
     handleOpenIssueInBrowser,
@@ -66,13 +67,6 @@ export function WorktreeCardParentContent({
     hoverBranchName,
     hoverWorkspaceTitle
   } = presentation
-  // Why: Done rows have no Mark Done action, so they keep the unread quick action.
-  const markDoneAvailable = useAppStore(
-    (s) =>
-      card.groupBy === 'workspace-status' &&
-      !affiliateListMode &&
-      canMarkWorkspaceDone(worktree, s.workspaceStatuses)
-  )
 
   const identityContent = (
     <div
@@ -80,7 +74,6 @@ export function WorktreeCardParentContent({
       data-worktree-card-hover-trigger=""
     >
       <WorktreeCardHeader card={card} presentation={presentation} />
-      <WorktreeCardStatusContext card={card} />
       {presentation.hasMetaRow && <WorktreeCardMetaRow card={card} presentation={presentation} />}
     </div>
   )
@@ -88,6 +81,9 @@ export function WorktreeCardParentContent({
   const identityContentWithHover =
     hasHoverDetails && !titleRenaming ? (
       <WorktreeCardDetailsHover
+        workspace={worktree}
+        referenceDetails={referenceDetails}
+        onManageLinks={affiliateListMode ? undefined : handleManageLinks}
         issue={hoverIssue}
         linearIssue={hoverLinearIssue}
         jiraIssue={hoverJiraIssue}
@@ -152,25 +148,13 @@ export function WorktreeCardParentContent({
           <WorktreeCardStatusSlot
             worktreeId={worktree.id}
             showStatus={showStatus}
-            showUnreadAction={showUnreadQuickAction && !markDoneAvailable}
+            showUnreadAction={showUnreadQuickAction}
             isUnread={worktree.isUnread}
             unreadTooltip={unreadTooltip}
             onPointerDown={stopQuickActionPointerPropagation}
             onToggleUnread={handleToggleUnreadQuick}
-            onMarkDone={
-              markDoneAvailable
-                ? (event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    void card.updateWorktreeMeta(
-                      worktree.id,
-                      { workspaceStatus: 'completed' },
-                      { executionHostId: worktree.hostId ?? 'local' }
-                    )
-                  }
-                : undefined
-            }
             prDisplay={statusLaneReview}
+            reviewChecks={reviewChecks.total > 0 ? reviewChecks : undefined}
             newCardStyle={newCardStyle}
             hasBranchIdentity={Boolean(branchIdentityDisplay)}
           />
@@ -182,7 +166,9 @@ export function WorktreeCardParentContent({
         className={cn(
           'flex min-w-0 flex-1 flex-col gap-1.5',
           // Why: inline agent rows intentionally outdent into the card gutter; inner elements handle truncation.
-          showInlineAgentList || (!newCardStyle && lineageChildren)
+          showInlineAgentList ||
+            getWorkspaceAttachments(worktree).length > 1 ||
+            (!newCardStyle && lineageChildren)
             ? 'overflow-visible'
             : 'overflow-hidden'
         )}

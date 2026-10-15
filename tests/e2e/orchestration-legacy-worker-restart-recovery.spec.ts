@@ -32,6 +32,7 @@ import {
   FAKE_AGENT_WINDOWS_SHELL
 } from './helpers/fake-agent-command-override'
 import { FAKE_AGENT_PASTE_END_SCANNER_SOURCE } from './helpers/fake-agent-paste-end-scanner'
+import { FAKE_CODEX_LAUNCH_PROBES_SOURCE } from './helpers/fake-codex-launch-probes'
 
 const PROVIDER_SESSION_ID = 'e2e-legacy-orchestration-worker'
 const fakeCliDir = mkdtempSync(path.join(os.tmpdir(), 'orca-e2e-legacy-worker-'))
@@ -89,20 +90,15 @@ async function emitAuthorityHook(hookEventName) {
     })
   }
 }
-if (process.argv.slice(2).includes('app-server')) {
-  process.stderr.write("error: unrecognized subcommand 'app-server'\\n")
-  process.exit(2)
-}
-if (process.argv.length === 3 && process.argv[2] === '--help') {
-  process.stdout.write('Usage: codex [OPTIONS] [PROMPT]\\n'); process.exit(0)
-}
+${FAKE_CODEX_LAUNCH_PROBES_SOURCE}
 appendLedger('ORCA_E2E_SPAWN_LEDGER', { event: 'spawn', argv: process.argv.slice(2) })
 process.stdout.write('\\u001b]0;Codex Ready\\u0007OpenAI Codex\\nmodel: e2e\\ndirectory: e2e\\n')
 const sessionStartHook = emitAuthorityHook('SessionStart')
-let acknowledged = false, receivedPrompt = '', lifecycleSent = false
+let acknowledged = false
+let lifecycleSent = false
 ${FAKE_AGENT_PASTE_END_SCANNER_SOURCE}
 process.stdin.on('data', (chunk) => {
-  const input = chunk.toString(); receivedPrompt += input
+  const input = chunk.toString()
   const pasteEndScan = scanFakeAgentPasteEnd(fakeAgentPasteEndTail, input)
   fakeAgentPasteEndTail = pasteEndScan.tail
   if (pasteEndScan.pasteEndOffset !== null) {
@@ -115,10 +111,7 @@ process.stdin.on('data', (chunk) => {
     fakeAgentMaybeAck(pasteEndScan, input, (mode) => {
       acknowledged = true
       void sessionStartHook.then(() => emitAuthorityHook('UserPromptSubmit'))
-      // Node's Windows console consumes paste markers; require the full task and submit instead.
-      const delivered = mode === 'bracketed' ||
-        (process.platform === 'win32' && receivedPrompt.includes('Respond ACK and remain idle'))
-      const message = delivered ? 'ACK' : 'PASTE_PROTOCOL_ERROR'
+      const message = mode === 'bracketed' ? 'ACK' : 'PASTE_PROTOCOL_ERROR'
       process.stdout.write('\\u001b]0;Codex Working\\u0007' + message + '\\n')
       setTimeout(() => process.stdout.write('\\u001b]0;Codex Ready\\u0007'), 10)
     })
@@ -333,7 +326,7 @@ function assertDispatchRemainsCurrent(
     const authority = db
       .prepare(
         `SELECT dc.status AS dispatch_status, dc.assignee_handle, dc.assignee_pane_key,
-                dc.process_incarnation, dc.contract_version, dc.launch_token_hash,
+                dc.process_incarnation, dc.contract_version,
                 wd.state AS worker_state, wd.worktree_id, wd.agent_terminal_handle
          FROM dispatch_contexts dc
          INNER JOIN worker_dispatches wd ON wd.dispatch_id = dc.id
@@ -346,7 +339,6 @@ function assertDispatchRemainsCurrent(
       assignee_pane_key: input.paneKey,
       process_incarnation: input.processIncarnation,
       contract_version: CURRENT_CONTRACT_VERSION,
-      launch_token_hash: expect.any(String),
       worker_state: 'ready',
       worktree_id: input.worktreeId,
       agent_terminal_handle: input.terminalHandle

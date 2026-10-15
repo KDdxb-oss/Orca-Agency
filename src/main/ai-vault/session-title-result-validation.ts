@@ -34,6 +34,9 @@ function parseTitle(value: unknown): AiVaultSessionTitle {
   return {
     agent: record.agent,
     sessionId: record.sessionId,
-    title: record.title.trim()
+    title: record.title.trim(),
+    ...(record.agent === 'claude' && typeof record.isHeadless === 'boolean'
+      ? { isHeadless: record.isHeadless }
+      : {})
   }
 }

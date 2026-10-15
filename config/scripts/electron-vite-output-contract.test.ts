@@ -71,7 +71,6 @@ function failBootstrapWithBanner(options: {
 }
 
 const electronBuilderConfig = createRequire(import.meta.url)('../electron-builder.config.cjs')
-const { FileMatcher } = createRequire(import.meta.url)('app-builder-lib/out/fileMatcher')
 
 describe('Electron Vite output contract', () => {
   it("minifies main and renderer with rolldown's in-process minifier", () => {
@@ -100,13 +99,14 @@ describe('Electron Vite output contract', () => {
     expect(output.chunkFileNames).toBe('chunks/[name]-[hash].js')
   })
 
-  it('keeps offline profile-state CLI imports unpacked at stable paths', () => {
+  it('keeps CLI main imports unpacked at stable paths', () => {
     const input = electronViteConfig.main?.build?.rollupOptions?.input
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
       throw new Error('Expected named main-process inputs')
     }
 
     for (const name of [
+      'gitlab/project-ref-parser',
       'orca-profiles/profile-index-store',
       'persistence/profile-state/profile-state-access',
       'persistence/profile-state/profile-state-active-location',
@@ -122,20 +122,14 @@ describe('Electron Vite output contract', () => {
     ]) {
       expect(input).toHaveProperty(name)
     }
-    const matcher = new FileMatcher(
-      '/app',
-      '/dest',
-      (value: string) => value,
-      electronBuilderConfig.asarUnpack
+    expect(electronBuilderConfig.asarUnpack).toContain('out/main/gitlab/project-ref-parser.js')
+    expect(electronBuilderConfig.asarUnpack).toContain('out/main/persistence/profile-state/**')
+    expect(electronBuilderConfig.asarUnpack).toContain(
+      'out/main/orca-profiles/profile-index-store.js'
     )
-    const isUnpacked = matcher.createFilter()
-    for (const file of [
-      'persistence/profile-state/profile-state-access.js',
-      'orca-profiles/profile-index-store.js',
-      'startup/http1-compatibility-marker.js'
-    ]) {
-      expect(isUnpacked(join('/app', 'out/main', file), { isDirectory: () => false })).toBe(true)
-    }
+    expect(electronBuilderConfig.asarUnpack).toContain(
+      'out/main/startup/http1-compatibility-marker.js'
+    )
   })
 
   it('externalizes packaged dependencies but bundles self-contained main dependencies', () => {
@@ -152,8 +146,11 @@ describe('Electron Vite output contract', () => {
     expect(external('@xterm/addon-serialize', undefined, false)).toBe(false)
     expect(external('tldts', undefined, false)).toBe(false)
     expect(external('zod', undefined, false)).toBe(false)
+    expect(external('smol-toml', undefined, false)).toBe(false)
+    expect(external('smol-toml/package.json', undefined, false)).toBe(false)
     expect(electronViteConfig.main?.build?.externalizeDeps?.exclude).toContain('tldts')
     expect(electronViteConfig.main?.build?.externalizeDeps?.exclude).toContain('zod')
+    expect(electronViteConfig.main?.build?.externalizeDeps?.exclude).toContain('smol-toml')
   })
 
   it('bundles validation dependencies used by the sandboxed preload', () => {

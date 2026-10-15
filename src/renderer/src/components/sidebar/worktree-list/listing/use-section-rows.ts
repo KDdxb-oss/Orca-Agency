@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '@/store'
+import { useNow } from '@/hooks/use-now'
 import type { AppState } from '@/store/types'
 import type { FolderWorkspace } from '../../../../../../shared/folder-workspace-types'
 import type { ProjectGroup } from '../../../../../../shared/project-group-types'
@@ -10,28 +11,23 @@ import type { WorkspaceStatusDefinition, Worktree } from '../../../../../../shar
 import type { WorktreeLineage } from '../../../../../../shared/worktree/lineage-types'
 import type { ExecutionHostId } from '../../../../../../shared/execution-host'
 import { folderWorkspaceKey } from '../../../../../../shared/workspace-scope'
+import { getFolderWorkspaceHostIdentity } from '../../../../../../shared/folder-workspace-worktree'
 import { getHostDisplayLabelOverrides } from '../../../../../../shared/host-setting-overrides'
 import { buildRows } from '../grouping/build-rows'
 import type { ProjectGroupingModel } from '../grouping/project-grouping'
 import type { PinnedWorktreeDisplayPolicy, Row, WorktreeGroupBy } from '../grouping/row-types'
 import { getLogicalRepoOrderRankById } from '../../project-header-drop'
 import { getEmptyProjectPlaceholderRepoIds } from '../../empty-project-placeholder-repos'
+import { deferHostSectionCollapse, scopeHostSectionCollapse } from '../../host-section-collapse'
 import { addHostSectionRows } from '../../host-section-rows'
 import { orderHostSectionOptions } from '../../host-section-order'
 import { buildSidebarHostOptions } from '../../sidebar-host-options'
 import { selectPendingWorktreeCreationKeys } from './pending-worktree-creation-keys'
-import {
-  buildStatusGroupedSmartComparator,
-  buildWorktreeComparator,
-  type SortBy
-} from '../../smart-sort'
-import { buildAttentionByWorktree } from '../../smart-attention'
-import { folderWorkspaceToWorktree } from '../../../../../../shared/folder-workspace-worktree'
-import { getAgentStatusEpochNow } from '@/lib/agent-status-epoch-clock'
+import { buildWorktreeComparator, type SortBy } from '../../smart-sort'
 
 type SectionRowsArgs = {
-  sortBy: SortBy
   groupBy: WorktreeGroupBy
+  sortBy: SortBy
   projectOrderBy: ProjectOrderBy
   pinnedDisplayPolicy: PinnedWorktreeDisplayPolicy
   defaultHostId: ExecutionHostId
@@ -63,6 +59,7 @@ function collectRenderedSidebarRowKeys(sectionRows: ReturnType<typeof addHostSec
     } else if (row.type === 'item') {
       keys.add(row.rowKey)
     } else if (row.type === 'folder-workspace') {
+      keys.add(getFolderWorkspaceHostIdentity(row.folderWorkspace))
       keys.add(folderWorkspaceKey(row.folderWorkspace.id))
     } else if (row.type === 'pending-creation') {
       keys.add(`pending:${row.creationId}`)
@@ -79,12 +76,12 @@ function collectRenderedSidebarRowKeys(sectionRows: ReturnType<typeof addHostSec
 // tier wrapped around them.
 export function useSidebarSectionRows(args: SectionRowsArgs) {
   const { repos, worktrees, repoMap, effectiveCollapsedGroups, defaultHostId } = args
-  const sortStatusFolders =
+  const recentSortNow = useNow(
+    60_000,
     args.groupBy === 'workspace-status' &&
-    (args.sortBy === 'smart' || args.sortBy === 'recent') &&
-    args.visibleFolderWorkspacesForRows.length > 0
-  const agentStatusEpoch = useAppStore((s) => (sortStatusFolders ? s.agentStatusEpoch : 0))
-  const sortNow = sortStatusFolders ? getAgentStatusEpochNow(agentStatusEpoch) : 0
+      args.sortBy === 'recent' &&
+      args.visibleFolderWorkspacesForRows.length > 0
+  )
   const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
   const sshTargetLabels = useAppStore((s) => s.sshTargetLabels)
   const sshConnectionStates = useAppStore((s) => s.sshConnectionStates)
@@ -156,78 +153,72 @@ export function useSidebarSectionRows(args: SectionRowsArgs) {
     [hostOptions]
   )
 
-  const rows: Row[] = useMemo(() => {
-    const state = useAppStore.getState()
-    const now = sortNow
-    const statusLaneComparator = sortStatusFolders
-      ? (() => {
-          const attention = buildAttentionByWorktree(
-            [...worktrees, ...args.visibleFolderWorkspacesForRows.map(folderWorkspaceToWorktree)],
-            state.tabsByWorktree,
-            state.agentStatusByPaneKey,
-            state.runtimePaneTitlesByTabId,
-            state.ptyIdsByTabId,
-            now,
-            state.migrationUnsupportedByPtyId,
-            state.terminalLayoutsByTabId
-          )
-          const base = buildWorktreeComparator(args.sortBy, repoMap, now, attention)
-          return args.sortBy === 'smart'
-            ? buildStatusGroupedSmartComparator(base, now, args.workspaceStatuses, attention)
-            : base
-        })()
-      : undefined
-    return buildRows(
+  const hostScopedGroups =
+    args.workspaceHostScope !== 'all' || args.visibleWorkspaceHostIds !== null
+  // Host sections apply lane collapse after splitting the rows by owner.
+  const rowCollapsedGroups = useMemo(
+    () =>
+      hostScopedGroups
+        ? deferHostSectionCollapse(effectiveCollapsedGroups)
+        : effectiveCollapsedGroups,
+    [effectiveCollapsedGroups, hostScopedGroups]
+  )
+
+  const rows: Row[] = useMemo(
+    () =>
+      buildRows(
+        args.groupBy,
+        worktrees,
+        repoMap,
+        args.prCache,
+        rowCollapsedGroups,
+        repoOrder,
+        args.workspaceStatuses,
+        args.projectOrderBy,
+        args.worktreeLineageById,
+        args.worktreeMap,
+        true,
+        args.settings,
+        args.visibleProjectGroupsForRows,
+        placeholderRepoIds,
+        args.importedWorktreesByRepo,
+        args.newExternalWorktreesInboxByRepo,
+        pendingCreations,
+        args.projectGrouping,
+        args.visibleFolderWorkspacesForRows,
+        hostLabelById,
+        defaultHostId,
+        args.pinnedDisplayPolicy,
+        args.groupBy === 'workspace-status' && args.sortBy === 'recent'
+          ? buildWorktreeComparator('recent', repoMap, recentSortNow, new Map())
+          : undefined
+      ),
+    [
       args.groupBy,
+      args.sortBy,
+      recentSortNow,
       worktrees,
       repoMap,
       args.prCache,
-      effectiveCollapsedGroups,
+      rowCollapsedGroups,
+      defaultHostId,
       repoOrder,
       args.workspaceStatuses,
       args.projectOrderBy,
       args.worktreeLineageById,
       args.worktreeMap,
-      true,
       args.settings,
+      args.projectGrouping,
       args.visibleProjectGroupsForRows,
+      args.visibleFolderWorkspacesForRows,
       placeholderRepoIds,
       args.importedWorktreesByRepo,
       args.newExternalWorktreesInboxByRepo,
       pendingCreations,
-      args.projectGrouping,
-      args.visibleFolderWorkspacesForRows,
       hostLabelById,
-      defaultHostId,
-      args.pinnedDisplayPolicy,
-      statusLaneComparator
-    )
-  }, [
-    args.groupBy,
-    args.sortBy,
-    sortStatusFolders,
-    sortNow,
-    worktrees,
-    repoMap,
-    args.prCache,
-    effectiveCollapsedGroups,
-    defaultHostId,
-    repoOrder,
-    args.workspaceStatuses,
-    args.projectOrderBy,
-    args.worktreeLineageById,
-    args.worktreeMap,
-    args.settings,
-    args.projectGrouping,
-    args.visibleProjectGroupsForRows,
-    args.visibleFolderWorkspacesForRows,
-    placeholderRepoIds,
-    args.importedWorktreesByRepo,
-    args.newExternalWorktreesInboxByRepo,
-    pendingCreations,
-    hostLabelById,
-    args.pinnedDisplayPolicy
-  ])
+      args.pinnedDisplayPolicy
+    ]
+  )
   const orderedHostOptions = useMemo(
     () => orderHostSectionOptions(hostOptions, workspaceHostOrder),
     [hostOptions, workspaceHostOrder]
@@ -252,29 +243,34 @@ export function useSidebarSectionRows(args: SectionRowsArgs) {
     },
     [orderedHostOptions, setWorkspaceHostOrder, workspaceHostOrder]
   )
-  const sectionRows = useMemo(
-    () =>
-      addHostSectionRows({
-        rows,
-        hostOptions: orderedHostOptions,
-        workspaceHostScope: args.workspaceHostScope,
-        visibleWorkspaceHostIds: args.visibleWorkspaceHostIds,
-        defaultHostId,
-        collapsedHostKeys: effectiveCollapsedGroups,
-        forceCollapseHosts: hostDragActive,
-        // Why: projects/workspaces are the primary sidebar object; host sections are only an explicit host-filter view.
-        preferProjectGrouping: true
-      }),
-    [
-      args.visibleWorkspaceHostIds,
-      args.workspaceHostScope,
+  const sectionRows = useMemo(() => {
+    const sectioned = addHostSectionRows({
+      rows,
+      hostOptions: orderedHostOptions,
+      workspaceHostScope: args.workspaceHostScope,
+      visibleWorkspaceHostIds: args.visibleWorkspaceHostIds,
       defaultHostId,
-      effectiveCollapsedGroups,
-      hostDragActive,
-      orderedHostOptions,
-      rows
-    ]
-  )
+      collapsedHostKeys: effectiveCollapsedGroups,
+      forceCollapseHosts: hostDragActive,
+      // Why: projects/workspaces are the primary sidebar object; host sections are only an explicit host-filter view.
+      preferProjectGrouping: true
+    })
+    return hostScopedGroups
+      ? scopeHostSectionCollapse({
+          rows: sectioned,
+          collapsedGroups: effectiveCollapsedGroups
+        })
+      : sectioned
+  }, [
+    args.visibleWorkspaceHostIds,
+    args.workspaceHostScope,
+    defaultHostId,
+    effectiveCollapsedGroups,
+    hostDragActive,
+    hostScopedGroups,
+    orderedHostOptions,
+    rows
+  ])
   const renderedSidebarRowKeys = useMemo(
     () => collectRenderedSidebarRowKeys(sectionRows),
     [sectionRows]

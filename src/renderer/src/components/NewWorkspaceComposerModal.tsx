@@ -176,8 +176,7 @@ function QuickTabBody({
     onCreated: onClose,
     isSubmissionCancelled,
     ...(modalData.telemetrySource ? { telemetrySource: modalData.telemetrySource } : {}),
-    enableIssueAutomation: modalData.enableIssueAutomation === true,
-    createGateMode: 'quick'
+    enableIssueAutomation: modalData.enableIssueAutomation === true
   })
   // Why: the composer's built-in `onOpenAgentSettings` handler navigates to
   // the settings page and closes the modal. For the quick-create flow we want

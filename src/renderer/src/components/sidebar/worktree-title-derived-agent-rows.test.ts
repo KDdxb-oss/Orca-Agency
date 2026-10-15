@@ -49,24 +49,24 @@ function processRead(agent: TuiAgent): TitleDerivedPaneForeground {
 }
 
 describe('buildTitleDerivedAgentRows', () => {
-  it('shows a manually launched Claude task in Activity when its foreground process is observed', () => {
-    const paneKey = makePaneKey('tab-1', LEAF_ID_1)
+  it('labels a working DeepSeek Build title as dsb and does not claim a Claude mention', () => {
     const rows = buildWorktreeAgentRows({
-      tabs: [makeTab('tab-1', { title: '◐ Example client task management prototype' })],
+      tabs: [makeTab('tab-1')],
       entries: [],
       retained: [],
-      runtimePaneTitlesByTabId: { 'tab-1': { 1: '◐ Example client task management prototype' } },
-      ptyIdsByTabId: { 'tab-1': ['pty-claude'] },
-      terminalLayoutsByTabId: { 'tab-1': makeSingleLayout(LEAF_ID_1) },
-      foregroundAgentsByPaneKey: {
-        [paneKey]: { agent: 'claude', agentEvidence: 'process-read', shellForeground: false }
+      runtimePaneTitlesByTabId: {
+        'tab-1': {
+          1: '⠼ - Review Codex integration - DeepSeek Build',
+          2: '⠋ Review DeepSeek Build integration'
+        }
       },
+      ptyIdsByTabId: { 'tab-1': ['pty-left', 'pty-right'] },
+      terminalLayoutsByTabId: { 'tab-1': makeSplitLayout() },
       now: 2000
     })
 
-    expect(rows.map((row) => [row.paneKey, row.agentType, row.state])).toEqual([
-      [paneKey, 'claude', 'working']
-    ])
+    // Why: a task mention does not establish the pane's owner.
+    expect(rows.map((row) => [row.agentType, row.state])).toEqual([['dsb', 'working']])
   })
 
   it('adds title-derived rows for live agent panes that have no hook status yet', () => {

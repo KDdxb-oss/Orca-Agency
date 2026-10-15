@@ -21,6 +21,7 @@ export const AGENT_KIND_VALUES = [
   'omp',
   'prime-agent',
   'qoder',
+  'qoder-cn',
   'gemini',
   'antigravity',
   'aider',
@@ -47,6 +48,7 @@ export const AGENT_KIND_VALUES = [
   'grok',
   'devin',
   'ante',
+  'jcode',
   'trae',
   'muse',
   'dsh',
@@ -142,6 +144,7 @@ export const launchSourceSchema = z.enum([
   'source_control_recovery',
   'terminal_context_menu',
   'session_grid',
+  'explain_commit',
   // Launches the host performs for a caller outside the desktop app.
   'cli',
   'mobile',
@@ -202,14 +205,12 @@ export const SETTINGS_CHANGED_WHITELIST = [
   'experimentalMobile',
   'experimentalPet',
   'experimentalNativeChat',
-  'experimentalStructuredNativeChat',
   'experimentalActivity',
   'experimentalAgentDashboardPopout',
   'experimentalTerminalAttention',
   'experimentalAgentHibernation',
   'experimentalEphemeralVms',
-  'geminiCliOAuthEnabled',
-  'openAgentTabsInChatByDefault'
+  'geminiCliOAuthEnabled'
 ] as const satisfies readonly BooleanGlobalSettingsKey[]
 export const settingsChangedKeySchema = z.enum(SETTINGS_CHANGED_WHITELIST)
 export type SettingsChangedKey = z.infer<typeof settingsChangedKeySchema>

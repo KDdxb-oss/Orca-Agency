@@ -1,8 +1,12 @@
-import type { SessionGridFilter } from '../../../shared/session-grid-types'
-import type { TerminalTab } from '../../../shared/terminal-tab-types'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../shared/constants'
 import { isStructuredTab } from '@/components/native-chat/structured-agent-session-tabs'
 import type { Tab } from '../../../shared/tab-types'
+import type { TerminalTab } from '../../../shared/terminal-tab-types'
+import type { SessionGridFilter } from '../../../shared/session-grid-types'
+import {
+  selectFloatingWorkspacePanelVisible,
+  type FloatingWorkspacePanelVisibilityState
+} from '@/store/floating-workspace-panel-selector'
 
 export type AutoAckTabTarget = {
   tabId: string
@@ -12,12 +16,10 @@ export type AutoAckTabTarget = {
   viewOrigin?: 'session-grid'
 }
 
-type AutoAckTargetState = {
+export type AutoAckTargetState = FloatingWorkspacePanelVisibilityState & {
   activeView: string
-  activeTabId: string | null
-  activeSessionGridWorktreeId?: string | null
   activeWorktreeId: string | null
-  activeTabIdByWorktree: Record<string, string | null>
+  activeSessionGridWorktreeId?: string | null
   activeSessionGridTabId: string | null
   sessionsGridFilter: SessionGridFilter
   sessionsGridHiddenTabIds: readonly string[]
@@ -26,19 +28,12 @@ type AutoAckTargetState = {
 }
 
 function sessionGridSelectionOnTheBoard(
-  state: {
-    activeSessionGridWorktreeId?: string | null
-    activeWorktreeId: string | null
-    sessionsGridFilter: SessionGridFilter
-    sessionsGridHiddenTabIds: readonly string[]
-    tabsByWorktree: Record<string, TerminalTab[]>
-  },
+  state: AutoAckTargetState,
   tabId: string
 ): AutoAckTabTarget | null {
   if (state.sessionsGridHiddenTabIds.includes(tabId)) {
     return null
   }
-  // A removed card cannot transfer its acknowledgement to another workspace's duplicate.
   let worktreeId = state.activeSessionGridWorktreeId
   if (worktreeId == null) {
     const owners = Object.keys(state.tabsByWorktree).filter((id) =>
@@ -52,13 +47,13 @@ function sessionGridSelectionOnTheBoard(
   if (!worktreeId || !state.tabsByWorktree[worktreeId]?.some((tab) => tab.id === tabId)) {
     return null
   }
-  // Why the length check: a filter naming a workspace with no open session is one the grid
-  // itself drops (buildSessionGridListing), so honouring it here would suppress every ack.
   const filter = state.sessionsGridFilter
-  if (filter !== 'all' && (state.tabsByWorktree[filter]?.length ?? 0) > 0) {
-    return worktreeId === filter
-      ? { tabId, worktreeId, surfaceKind: 'terminal', viewOrigin: 'session-grid' }
-      : null
+  if (
+    filter !== 'all' &&
+    (state.tabsByWorktree[filter]?.length ?? 0) > 0 &&
+    worktreeId !== filter
+  ) {
+    return null
   }
   return { tabId, worktreeId, surfaceKind: 'terminal', viewOrigin: 'session-grid' }
 }
@@ -72,16 +67,15 @@ function sessionGridSelectionOnTheBoard(
  */
 function resolveWorkspaceAutoAckTarget(
   state: AutoAckTargetState,
-  worktreeId: string,
-  terminalTabId: string | null
+  worktreeId: string
 ): AutoAckTabTarget | null {
   const activeTab = state.getActiveTab(worktreeId)
   if (activeTab && isStructuredTab(activeTab)) {
     return { tabId: activeTab.id, worktreeId, surfaceKind: 'structured' }
   }
-  return terminalTabId === null
-    ? null
-    : { tabId: terminalTabId, worktreeId, surfaceKind: 'terminal' }
+  return activeTab?.contentType === 'terminal'
+    ? { tabId: activeTab.entityId, worktreeId, surfaceKind: 'terminal' }
+    : null
 }
 
 /**
@@ -94,15 +88,11 @@ function resolveWorkspaceAutoAckTarget(
  */
 export function resolveAutoAckTabTargets(
   state: AutoAckTargetState,
-  options: { floatingPanelVisible: boolean }
+  options?: { floatingPanelVisible: boolean }
 ): AutoAckTabTarget[] {
   const targets: AutoAckTabTarget[] = []
-  if (options.floatingPanelVisible) {
-    const floating = resolveWorkspaceAutoAckTarget(
-      state,
-      FLOATING_TERMINAL_WORKTREE_ID,
-      state.activeTabIdByWorktree[FLOATING_TERMINAL_WORKTREE_ID] ?? null
-    )
+  if (options?.floatingPanelVisible ?? selectFloatingWorkspacePanelVisible(state)) {
+    const floating = resolveWorkspaceAutoAckTarget(state, FLOATING_TERMINAL_WORKTREE_ID)
     // The floating pane is on top when two worktrees claim the same tab ID.
     if (floating) {
       targets.push(floating)
@@ -110,10 +100,8 @@ export function resolveAutoAckTabTargets(
   }
   if (state.activeView === 'terminal') {
     const active = state.activeWorktreeId
-      ? resolveWorkspaceAutoAckTarget(state, state.activeWorktreeId, state.activeTabId)
-      : state.activeTabId === null
-        ? null
-        : { tabId: state.activeTabId, worktreeId: null, surfaceKind: 'terminal' as const }
+      ? resolveWorkspaceAutoAckTarget(state, state.activeWorktreeId)
+      : null
     if (active && !targets.some((target) => target.tabId === active.tabId)) {
       targets.push(active)
     }
@@ -125,4 +113,23 @@ export function resolveAutoAckTabTargets(
     }
   }
   return targets
+}
+
+/**
+ * Whether a tab of either kind is on a visible surface — the one "did the user see it" rule.
+ * Attention dispatch and auto-ack both read it, so a surface the user is watching neither earns
+ * an unread marker nor has one to clear.
+ */
+export function isTabOnVisibleSurface(
+  state: AutoAckTargetState,
+  worktreeId: string,
+  tabId: string,
+  surfaceKind: AutoAckTabTarget['surfaceKind']
+): boolean {
+  return resolveAutoAckTabTargets(state).some(
+    (target) =>
+      target.surfaceKind === surfaceKind &&
+      target.tabId === tabId &&
+      target.worktreeId === worktreeId
+  )
 }

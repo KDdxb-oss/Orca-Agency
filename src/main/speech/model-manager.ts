@@ -15,6 +15,7 @@ import {
   type SpeechModelCacheDir
 } from './model-cache-path'
 import { SpeechModelDownloadTransport } from './speech-model-download-transport'
+import * as speechPlatform from './speech-platform-support'
 import {
   removeModelDownloadFiles,
   removeModelDownloadStaging
@@ -104,6 +105,9 @@ export class ModelManager extends SpeechModelDownloadTransport {
       }
     }
 
+    if (!speechPlatform.supportsLocalSpeech()) {
+      return { id: modelId, status: 'error', error: speechPlatform.LOCAL_SPEECH_UNAVAILABLE }
+    }
     const modelDir = this.getModelDir(modelId)
     if (existsSync(modelDir) && this.validateModelFiles(manifest, modelDir)) {
       const state: SpeechModelState = { id: modelId, status: 'ready' }
@@ -158,6 +162,7 @@ export class ModelManager extends SpeechModelDownloadTransport {
     if (!isLocalSpeechModel(manifest)) {
       throw new Error(`Model does not support downloads: ${modelId}`)
     }
+    speechPlatform.assertLocalSpeechSupported()
     if (!manifest.downloadFiles?.length || !manifest.sizeBytes) {
       throw new Error(`Model download metadata missing: ${modelId}`)
     }

@@ -1,4 +1,5 @@
 import {
+  getAgentForkArgv,
   getAgentResumeArgv,
   type AgentProviderSessionMetadata,
   type ResumableTuiAgent
@@ -7,7 +8,11 @@ import type { SessionOptionValue } from './native-chat-session-options'
 import { buildSleepingAgentLaunchConfig } from './sleeping-agent-launch-config'
 import { resolveAgentLaunchCommand } from './tui-agent-launch-command'
 import type { AgentStartupPlan } from './tui-agent-startup'
-import { resolveStartupShell, type AgentStartupShell } from './tui-agent-startup-shell'
+import {
+  resolveStartupShell,
+  tokenizeStartupCommand,
+  type AgentStartupShell
+} from './tui-agent-startup-shell'
 import { TUI_AGENT_CONFIG } from './tui-agent-config'
 import type { TuiAgent } from './tui-agent'
 import { buildAgentResumeLaunchCommand } from './agent-resume-launch-command'
@@ -25,11 +30,23 @@ export function buildAgentResumeStartupPlan(args: {
   sessionOptions?: Record<string, SessionOptionValue>
   sessionOptionsOverrideAgentArgs?: boolean
   isRemote?: boolean
+  /** The caller chose the terminal folder on purpose, so Codex must not ask for the recorded one. */
+  resumeInLaunchCwd?: boolean
+  /** Open a copy of the conversation instead of re-entering it; null for agents that cannot. */
+  fork?: boolean
 }): AgentStartupPlan | null {
-  const argv = getAgentResumeArgv(args.agent, args.providerSession, args.ompResumeFilePath)
-  if (!argv) {
+  const initialResumeArgv = args.fork
+    ? getAgentForkArgv(args.agent, args.providerSession)
+    : getAgentResumeArgv(args.agent, args.providerSession, args.ompResumeFilePath)
+  if (!initialResumeArgv) {
     return null
   }
+  // Why: Codex otherwise prompts for the folder, defaulting to the recorded one even once it was
+  // deleted (#17745). Kept before `resume` so dropAgentResumeArgvFromCommand strips only that.
+  const argv =
+    args.agent === 'codex' && args.resumeInLaunchCwd
+      ? [initialResumeArgv[0], '-c', 'tui.resume_cwd=current', ...initialResumeArgv.slice(1)]
+      : initialResumeArgv
   const shell = resolveStartupShell(args.platform, args.shell)
   const resolvedAgentCommand = args.agentCommand?.trim()
   const baseCommand = resolvedAgentCommand
@@ -56,7 +73,23 @@ export function buildAgentResumeStartupPlan(args: {
     ...args,
     agentCommand: baseCommand.commandWithoutSessionOptions
   })
-  const launchCommand = buildAgentResumeLaunchCommand(args.agent, baseCommand.command, argv, shell)
+  // Orca already chose the workspace; do not ask again when the rollout records an older folder.
+  const tokens = tokenizeStartupCommand(baseCommand.command, shell)
+  const hasDirectoryOverride =
+    tokens.ok &&
+    tokens.tokens.some(
+      (token) => token === '--cd' || token.startsWith('--cd=') || token.startsWith('-C')
+    )
+  const resumeArgv =
+    args.agent === 'codex' && tokens.ok && !hasDirectoryOverride
+      ? [argv[0], '--cd', '.', ...argv.slice(1)]
+      : argv
+  const launchCommand = buildAgentResumeLaunchCommand(
+    args.agent,
+    baseCommand.command,
+    resumeArgv,
+    shell
+  )
   const applied = baseCommand.appliedSessionOptions
   return {
     agent: args.agent,

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { release } from 'node:os'
 import type * as pty from 'node-pty'
 import { warmWindowsConptyOnce } from './windows-conpty-warmup'
 import { assignHostProcessToKillOnCloseJob } from '../windows/windows-pty-job'
+import { selectWindowsConptyBackend } from '../providers/windows-conpty-backend'
 
 vi.mock('../windows/windows-pty-job', () => ({
   assignHostProcessToKillOnCloseJob: vi.fn(() => true)
@@ -50,7 +52,7 @@ describe('warmWindowsConptyOnce', () => {
     expect(assignHostProcessToKillOnCloseJob).not.toHaveBeenCalled()
   })
 
-  it('spawns a short-lived cmd.exe with the bundled ConPTY on Windows', async () => {
+  it('spawns a short-lived cmd.exe with the selected ConPTY backend on Windows', async () => {
     restorePlatform = setPlatform('win32')
     const { proc, fireExit } = makeFakePty()
     const spawnPty = vi.fn(() => proc) as unknown as typeof pty.spawn
@@ -63,11 +65,17 @@ describe('warmWindowsConptyOnce', () => {
     const [file, args, options] = vi.mocked(spawnPty).mock.calls[0]
     expect(String(file).toLowerCase()).toContain('cmd')
     expect(args).toEqual(['/c', 'exit'])
-    expect(options).toMatchObject({ useConptyDll: true, cols: 2, rows: 1 })
+    const selected = selectWindowsConptyBackend({
+      platform: 'win32',
+      arch: process.arch,
+      osRelease: release(),
+      override: process.env.ORCA_WINDOWS_CONPTY_BACKEND
+    })
+    expect(options).toMatchObject({ useConptyDll: selected === 'bundled', cols: 2, rows: 1 })
 
-    // A clean exit must not leave the kill timer to fire later.
+    // A clean exit must release node-pty's remaining pseudoconsole handles.
     fireExit()
-    expect(proc.kill).not.toHaveBeenCalled()
+    expect(proc.kill).toHaveBeenCalledTimes(1)
   })
 
   it('kills the warm-up shell if it never exits', async () => {

@@ -3,6 +3,7 @@ import React from 'react'
 import { lastEnteredDoneAt } from '@/components/dashboard/agent-finished-timestamp'
 import { useNow } from '@/hooks/use-now'
 import { formatShortTimeAgo } from '@/lib/short-time-ago'
+import { translate } from '@/i18n/i18n'
 import { projectGroupIdFromRepoId } from '../../../../shared/folder-workspace-worktree'
 import { useWorktreeActivityStatus } from './use-worktree-activity-status'
 import type { WorktreeCardController } from './use-worktree-card-controller'
@@ -13,18 +14,25 @@ export function WorktreeCardStatusContext({
 }: {
   card: WorktreeCardController
 }): React.JSX.Element | null {
-  const visible = card.groupBy === 'workspace-status' && !card.affiliateListMode
-  const now = useNow(30_000, visible)
-  const activityStatus = useWorktreeActivityStatus(card.worktree.id)
-  if (!visible) {
+  if (card.groupBy !== 'workspace-status' || card.affiliateListMode) {
     return null
   }
+  return <VisibleWorktreeCardStatusContext card={card} />
+}
+
+function VisibleWorktreeCardStatusContext({
+  card
+}: {
+  card: WorktreeCardController
+}): React.JSX.Element {
+  const now = useNow(30_000, true)
+  const activityStatus = useWorktreeActivityStatus(card.worktree.id)
 
   const projectGroupId = card.repo?.projectGroupId ?? projectGroupIdFromRepoId(card.worktree.repoId)
   const projectName =
     card.projectGroups.find((group) => group.id === projectGroupId)?.name ??
     card.repo?.displayName ??
-    'Unassigned'
+    translate('auto.components.sidebar.WorktreeCardStatusContext.unassigned', 'Unassigned')
   const latestCompletionAt = card.statusContextAgents.reduce((latest, agent) => {
     if (agent.state !== 'done') {
       return latest
@@ -39,16 +47,23 @@ export function WorktreeCardStatusContext({
   }, 0)
   const timestamp = latestWorkingAt || latestCompletionAt || card.worktree.lastActivityAt
   const ageLabel =
-    activityStatus === 'working' ? 'Now' : timestamp > 0 ? formatShortTimeAgo(timestamp, now) : null
+    activityStatus === 'working'
+      ? translate('auto.components.sidebar.WorktreeCardStatusContext.now', 'now')
+      : timestamp > 0
+        ? formatShortTimeAgo(timestamp, now)
+        : null
   const ageTitle =
     activityStatus === 'working'
-      ? 'Agent working now'
+      ? translate(
+          'auto.components.sidebar.WorktreeCardStatusContext.workingNow',
+          'Agent working now'
+        )
       : latestWorkingAt
-        ? `Last agent update ${new Date(latestWorkingAt).toLocaleString()}`
+        ? `${translate('auto.components.sidebar.WorktreeCardStatusContext.lastAgentUpdate', 'Last agent update')} ${new Date(latestWorkingAt).toLocaleString()}`
         : latestCompletionAt
-          ? `Last agent finished ${new Date(latestCompletionAt).toLocaleString()}`
+          ? `${translate('auto.components.sidebar.WorktreeCardStatusContext.lastAgentFinished', 'Last agent finished')} ${new Date(latestCompletionAt).toLocaleString()}`
           : timestamp > 0
-            ? `Last workspace activity ${new Date(timestamp).toLocaleString()}`
+            ? `${translate('auto.components.sidebar.WorktreeCardStatusContext.lastWorkspaceActivity', 'Last workspace activity')} ${new Date(timestamp).toLocaleString()}`
             : undefined
 
   return (

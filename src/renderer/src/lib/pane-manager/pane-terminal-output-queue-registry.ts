@@ -73,6 +73,7 @@ export type QueueEntry = {
   onBackgroundBacklogDropped?: () => void
   backgroundBacklogDropped: boolean
   highPriority: boolean
+  interactiveCharsRemaining: number
   foregroundHold: boolean
   foregroundHoldSafetyDelayMs: number
   foregroundCoalesce: boolean
@@ -264,6 +265,7 @@ export function discardTerminalOutput(terminal: TerminalOutputTarget): void {
   if (entry) {
     // Why: discarded chunks still consumed their deliveries — credit them or main's in-flight window leaks (fireQueuedAckCredits).
     fireQueuedAckCredits(entry)
+    entry.interactiveCharsRemaining = 0
   }
   discardInFlightTerminalOutputAckCredits(terminal)
   queuedByTerminal.delete(terminal)

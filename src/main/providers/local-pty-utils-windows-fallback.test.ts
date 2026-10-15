@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { release } from 'node:os'
 import type * as pty from 'node-pty'
 import { spawnShellWithFallback, type WindowsShellSpawnAttempt } from './local-pty-utils'
+import { selectWindowsConptyBackend } from './windows-conpty-backend'
 
 function setPlatform(platform: NodeJS.Platform): () => void {
   const original = process.platform
@@ -72,17 +74,24 @@ describe('spawnShellWithFallback on Windows', () => {
 
     // Falls back to the next real absolute executable instead of throwing.
     expect(result.shellPath).toBe(WINDOWS_POWERSHELL)
+    const useConptyDll =
+      selectWindowsConptyBackend({
+        platform: 'win32',
+        arch: process.arch,
+        osRelease: release(),
+        override: process.env.ORCA_WINDOWS_CONPTY_BACKEND
+      }) === 'bundled'
     expect(ptySpawn).toHaveBeenNthCalledWith(
       1,
       PWSH7,
       attempts[0].shellArgs,
-      expect.objectContaining({ cwd: 'C:\\repo', useConptyDll: true })
+      expect.objectContaining({ cwd: 'C:\\repo', useConptyDll })
     )
     expect(ptySpawn).toHaveBeenNthCalledWith(
       2,
       WINDOWS_POWERSHELL,
       attempts[1].shellArgs,
-      expect.objectContaining({ cwd: 'C:\\repo', useConptyDll: true })
+      expect.objectContaining({ cwd: 'C:\\repo', useConptyDll })
     )
   })
 

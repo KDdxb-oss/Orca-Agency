@@ -111,11 +111,23 @@ export function normalizeTerminalChunk(
       textStart = index + 1
       continue
     }
-    if (char === '\r' && combined[index + 1] === '\n') {
+    if (char === '\r') {
+      const lineBreak = terminalLineBreakAfterCarriage(combined, index)
+      if (lineBreak.kind === 'pending') {
+        appendTerminalNormalizedSpan(parts, combined, textStart, index)
+        return { text: parts.join(''), pendingAnsi: ownRetainedString(combined.slice(index)) }
+      }
+      if (lineBreak.kind === 'line-break') {
+        appendTerminalNormalizedSpan(parts, combined, textStart, index)
+        parts.push('\n')
+        index = lineBreak.endIndex
+        textStart = index + 1
+        continue
+      }
       appendTerminalNormalizedSpan(parts, combined, textStart, index)
-      parts.push('\n')
-      index += 1
-      textStart = index + 1
+      parts.push('\r')
+      index = lineBreak.resumeIndex - 1
+      textStart = lineBreak.resumeIndex
       continue
     }
     const code = combined.charCodeAt(index)
@@ -130,6 +142,51 @@ export function normalizeTerminalChunk(
   }
   appendTerminalNormalizedSpan(parts, combined, textStart, combined.length)
   return { text: parts.join(''), pendingAnsi: '' }
+}
+
+function terminalLineBreakAfterCarriage(
+  value: string,
+  carriageIndex: number
+):
+  | { kind: 'line-break'; endIndex: number }
+  | { kind: 'pending' }
+  | { kind: 'redraw'; resumeIndex: number } {
+  let index = carriageIndex + 1
+  while (index < value.length) {
+    if (value[index] === '\r') {
+      index += 1
+      continue
+    }
+    if (value[index] === '\n') {
+      return { kind: 'line-break', endIndex: index }
+    }
+    if (value[index] !== '\x1b') {
+      return { kind: 'redraw', resumeIndex: index }
+    }
+    if (index + 1 === value.length) {
+      return value.length - carriageIndex <= MAX_TAIL_PENDING_ANSI_CHARS
+        ? { kind: 'pending' }
+        : { kind: 'redraw', resumeIndex: index }
+    }
+    const sequence = parseAnsiControlSequence(value, index)
+    if (!sequence) {
+      return value.length - carriageIndex <= MAX_TAIL_PENDING_ANSI_CHARS
+        ? { kind: 'pending' }
+        : { kind: 'redraw', resumeIndex: index }
+    }
+    const harmlessCsi =
+      sequence.kind === 'csi' &&
+      (sequence.final === 'm' ||
+        ((sequence.final === 'h' || sequence.final === 'l') && sequence.params === '?25'))
+    const harmlessOsc = sequence.kind === 'other' && value[index + 1] === ']'
+    if (!harmlessCsi && !harmlessOsc) {
+      return { kind: 'redraw', resumeIndex: index }
+    }
+    index = sequence.endIndex + 1
+  }
+  return value.length - carriageIndex <= MAX_TAIL_PENDING_ANSI_CHARS
+    ? { kind: 'pending' }
+    : { kind: 'redraw', resumeIndex: index }
 }
 
 function appendTerminalNormalizedSpan(

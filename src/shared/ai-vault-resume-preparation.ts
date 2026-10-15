@@ -1,13 +1,16 @@
 import type { AiVaultSession } from './ai-vault-types'
 
-/** A launch request, separate from the persisted history schema. */
 export type AiVaultResumeSession = AiVaultSession & { resumeCwd?: string }
 
 export type AiVaultPrepareSessionResumeArgs = Pick<
   AiVaultSession,
   'agent' | 'filePath' | 'codexHome' | 'executionHostId'
 > &
-  Partial<Pick<AiVaultResumeSession, 'sessionId' | 'resumeCwd'>>
+  Partial<Pick<AiVaultResumeSession, 'sessionId' | 'resumeCwd'>> & {
+    /** A fork only reads the conversation, so a native chat that owns it does not refuse it.
+     *  Older hosts drop the field and refuse as for a resume. */
+    fork?: boolean
+  }
 
 export type AiVaultPrepareSessionResumeResult = {
   useRealCodexHome: boolean

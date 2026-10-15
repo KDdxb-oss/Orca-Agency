@@ -25,15 +25,17 @@ const PACKAGED_RUNTIME_PACKAGE_ROOTS = [
   'node-pty',
   'posthog-node',
   'proper-lockfile',
-  // serve-sim (for CLI JS entry + closure + state/middleware + to make packaged require('serve-sim') + its internal relatives work; mirrors other runtime JS like ws/yaml/zod. Natives/dylibs still via extraResources + the node_modules/serve-sim copy in resources from builder. Client if added too.
-  'serve-sim',
   'qrcode',
+  'smol-toml',
   'ssh2',
   'tweetnacl',
   'ws',
   'yaml',
   'zod'
 ]
+// Why macOS only: serve-sim drives the iOS Simulator, and its native addon is a Mach-O that
+// Windows signing rejects as a PE file.
+const DARWIN_PACKAGED_RUNTIME_PACKAGE_ROOTS = ['serve-sim']
 const WINDOWS_PACKAGED_RUNTIME_PACKAGE_ROOTS = [
   '@vscode/windows-process-tree',
   '@orca/windows-registry'
@@ -180,6 +182,7 @@ function collectPackagedRuntimePackages(electronPlatformName = process.platform)
   // Why: cross-builds must select native dependencies from the artifact target, not the build host.
   const packageRoots = [
     ...PACKAGED_RUNTIME_PACKAGE_ROOTS,
+    ...(electronPlatformName === 'darwin' ? DARWIN_PACKAGED_RUNTIME_PACKAGE_ROOTS : []),
     ...(electronPlatformName === 'win32' ? WINDOWS_PACKAGED_RUNTIME_PACKAGE_ROOTS : [])
   ]
   for (const packageName of packageRoots) {
@@ -532,13 +535,16 @@ function assertPackagedNativeVariantsInstalled(electronPlatformName, electronArc
 
   const rootOptionalDependencies =
     JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf8')).optionalDependencies ?? {}
-  // Why win32 is always x64: winSpeechNativeResource packages sherpa-onnx-win-x64 for every
-  // Windows target (there is no sherpa-onnx-win-arm64; it runs under emulation).
+  // Native Windows ARM64 packages omit offline speech; x64 addons cannot load there.
   const sherpaName =
     electronPlatformName === 'win32'
       ? 'sherpa-onnx-win-x64'
       : `sherpa-onnx-${electronPlatformName}-${architecture}`
-  if (sherpaName in rootOptionalDependencies && !isInstalled(sherpaName)) {
+  if (
+    !(electronPlatformName === 'win32' && architecture === 'arm64') &&
+    sherpaName in rootOptionalDependencies &&
+    !isInstalled(sherpaName)
+  ) {
     missing.push(sherpaName)
   }
 

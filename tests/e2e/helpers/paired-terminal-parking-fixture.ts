@@ -15,7 +15,7 @@ function shellQuote(value: string): string {
 function fixtureCommand(fixturePath: string, marker: string): string {
   const command = [process.execPath, fixturePath, marker]
   return process.platform === 'win32'
-    ? command.map((value) => `"${value.replaceAll('"', '""')}"`).join(' ')
+    ? `& ${command.map((value) => `"${value.replaceAll('"', '""')}"`).join(' ')}`
     : command.map(shellQuote).join(' ')
 }
 
@@ -32,8 +32,19 @@ export function createPairedTerminalParkingFixture(): {
       'process.stdout.write(`READY:${marker}\\r\\n`)',
       'process.stdin.setRawMode?.(true)',
       "process.stdin.setEncoding('utf8')",
-      "process.stdin.on('data', (data) => {",
-      '  for (const command of data.split(/\\r\\n|\\r|\\n/).filter(Boolean)) {',
+      "let input = ''",
+      'async function writeBurst(prefix, count, done) {',
+      '  for (let row = 0; row < count; row += 1) {',
+      "    const line = `${prefix}-${row}-${'x'.repeat(80)}\\r\\n`",
+      "    if (!process.stdout.write(line)) await new Promise((resolve) => process.stdout.once('drain', resolve))",
+      '  }',
+      '  await new Promise((resolve) => process.stdout.write(`${done}\\r\\n`, resolve))',
+      '}',
+      "process.stdin.on('data', async (data) => {",
+      '  input += data',
+      '  const commands = input.split(/\\r\\n|\\r|\\n/)',
+      "  input = commands.pop() ?? ''",
+      '  for (const command of commands.filter(Boolean)) {',
       "    if (command.startsWith('TITLE_START:')) {",
       "      const token = command.slice('TITLE_START:'.length)",
       "      process.stdout.write('\\u001b]0;⠋ Cursor Agent\\u0007')",
@@ -59,13 +70,11 @@ export function createPairedTerminalParkingFixture(): {
       '    }',
       "    if (command.startsWith('FLOOD:')) {",
       "      const token = command.slice('FLOOD:'.length)",
-      `      for (let row = 0; row < ${FLOOD_ROWS}; row += 1) process.stdout.write(\`flood-${'${token}'}-${'${row}'}-${'x'.repeat(80)}\\r\\n\`)`,
-      '      process.stdout.write(`FLOODED:${token}\\r\\n`)',
+      `      await writeBurst('flood-' + token, ${FLOOD_ROWS}, 'FLOODED:' + token)`,
       '      continue',
       '    }',
       "    if (command === 'FILL') {",
-      `      for (let row = 0; row < ${FILL_ROWS}; row += 1) process.stdout.write(\`fill-${'${marker}'}-${'${row}'}-${'x'.repeat(80)}\\r\\n\`)`,
-      '      process.stdout.write(`FILLED:${marker}\\r\\n`)',
+      `      await writeBurst('fill-' + marker, ${FILL_ROWS}, 'FILLED:' + marker)`,
       '      continue',
       '    }',
       '    process.stdout.write(`LIVE:${command}\\r\\n`)',

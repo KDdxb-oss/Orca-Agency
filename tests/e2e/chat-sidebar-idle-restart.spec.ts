@@ -99,7 +99,7 @@ test('idle chat nesting and provider icons survive a real quit before title reso
     await expect(doneHeading).toHaveAttribute('aria-expanded', 'false')
     await expect(closed).toHaveCount(0)
     const progressHeading = second.page.getByRole('button', {
-      name: 'In progress (1)',
+      name: 'In Progress (1)',
       exact: true
     })
     await progressHeading.click()
@@ -112,7 +112,7 @@ test('idle chat nesting and provider icons survive a real quit before title reso
     app = third.app
     await waitForSessionReady(third.page)
     await expect(
-      third.page.getByRole('button', { name: 'In progress (1)', exact: true })
+      third.page.getByRole('button', { name: 'In Progress (1)', exact: true })
     ).toHaveAttribute('aria-expanded', 'false')
     await expect(third.page.locator('[data-chat-sidebar-id]')).toHaveCount(1)
   } finally {

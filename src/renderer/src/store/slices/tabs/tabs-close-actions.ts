@@ -8,8 +8,6 @@ import {
   sanitizeRecentTabIds
 } from '../tab-group-state'
 import { buildActiveSurfacePatch } from './tabs-surface'
-import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
-import { getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { beginStructuredAgentSessionTabClose } from '@/runtime/structured-agent-session-tab-retirement'
 import {
   hasStructuredAgentSessionLaunchCancellationTombstone,
@@ -17,10 +15,11 @@ import {
 } from '@/lib/structured-agent-session-launch-registry'
 import { structuredAgentSessionTabId } from '../../../../../shared/structured-agent-session-projection'
 import { clearWebSessionFocusIntentIfMatches } from '@/runtime/web-session-focus-intent'
-import { LOCAL_STRUCTURED_SESSION_OWNER } from '@/runtime/local-structured-session-owner'
-import { findWorkspaceSplitPartner } from '@/lib/workspace-split-layout'
-import { parseWorkspaceKey } from '../../../../../shared/workspace-scope'
-import { completeClosedChatTab } from '@/lib/chat-sidebar-tab-close'
+import { ownsGlobalSelection } from '../../global-selection-owner'
+import {
+  structuredAgentSessionFocusOwner,
+  structuredAgentSessionTargetForTab
+} from '@/runtime/structured-agent-session-owner'
 
 export function createTabsCloseActions(
   set: TabsSliceSet,
@@ -52,26 +51,30 @@ export function createTabsCloseActions(
       const remainingOrder = dedupeTabOrder(dedupedGroupOrder.filter((id) => id !== tabId))
       const wasLastTab = remainingOrder.length === 0
       if (tab.contentType === 'agent-session') {
-        completeClosedChatTab(get, tabId)
         const provisional =
           shouldRetainStructuredAgentSessionLaunchTab(worktreeId, tab.entityId) ||
           hasStructuredAgentSessionLaunchCancellationTombstone(worktreeId, tab.entityId)
-        if (provisional) {
-          clearWebSessionFocusIntentIfMatches(
-            { environmentId: LOCAL_STRUCTURED_SESSION_OWNER },
+        const target = structuredAgentSessionTargetForTab(state, tab)
+        if (target) {
+          if (provisional) {
+            clearWebSessionFocusIntentIfMatches(
+              structuredAgentSessionFocusOwner(target),
+              worktreeId,
+              `agent-session:${tab.entityId}`
+            )
+          }
+          beginStructuredAgentSessionTabClose({
+            target,
             worktreeId,
-            `agent-session:${tab.entityId}`
-          )
+            sessionId: tab.entityId,
+            provisional
+          })
+        } else {
+          // Closing still removes the tab; no host can be named to stop its chat on.
+          console.warn('[structured-agent-session] close found no owning host', tab.entityId)
         }
-        beginStructuredAgentSessionTabClose({
-          target: getActiveRuntimeTarget({
-            activeRuntimeEnvironmentId: getRuntimeEnvironmentIdForWorktree(state, worktreeId)
-          }),
-          worktreeId,
-          sessionId: tab.entityId,
-          provisional
-        })
         get().clearNativeChatLaunchDraft(structuredAgentSessionTabId(tab.entityId))
+        // The unsent draft stays: it belongs to the conversation, which can be reopened from history.
       }
       // Why: on closing the active tab, walk the MRU stack to the previously-active tab; pickNextActiveTab falls back to the neighbor.
       const nextActiveTabId =
@@ -169,7 +172,7 @@ export function createTabsCloseActions(
                 }
               }
             : {}),
-          ...(!shouldDeactivateWorktree && current.activeWorktreeId === worktreeId
+          ...(!shouldDeactivateWorktree && ownsGlobalSelection(current, worktreeId)
             ? buildActiveSurfacePatch(
                 {
                   ...current,
@@ -190,26 +193,6 @@ export function createTabsCloseActions(
             : {})
         }
       })
-
-      // Closing the last tab in a split pane should remove that pane, while the
-      // workspace itself remains available in the sidebar.
-      const afterClose = get()
-      const splitPartner = findWorkspaceSplitPartner(afterClose.workspaceSplitGroups, worktreeId)
-      if (
-        !opts?.preserveWorktreeSelection &&
-        splitPartner &&
-        (afterClose.unifiedTabsByWorktree[worktreeId] ?? []).length === 0
-      ) {
-        afterClose.unsplitWorkspace(worktreeId)
-        if (afterClose.activeWorktreeId === null || afterClose.activeWorktreeId === worktreeId) {
-          const scope = parseWorkspaceKey(splitPartner)
-          if (scope?.type === 'folder') {
-            get().setActiveFolderWorkspace(scope.folderWorkspaceId)
-          } else {
-            get().setActiveWorktree(scope?.type === 'worktree' ? scope.worktreeId : splitPartner)
-          }
-        }
-      }
 
       if (opts?.recordInteraction !== false) {
         get().recordFeatureInteraction?.('terminal-tabs')

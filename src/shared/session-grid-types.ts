@@ -83,6 +83,7 @@ export type SessionGridDotState =
   | 'permission'
   | 'interrupted'
   | 'failed'
+  | 'unconfirmed'
   | 'done'
   | 'idle'
 
@@ -99,6 +100,7 @@ export function sessionGridDotStateBucket(
 ): Exclude<SessionGridStateFilter, 'all'> {
   switch (dotState) {
     case 'permission':
+    case 'unconfirmed':
       return 'attention'
     case 'working':
     case 'monitoring':
@@ -124,6 +126,7 @@ export type SessionGridAttentionBadge =
   | 'permission'
   | 'interrupted'
   | 'failed'
+  | 'unconfirmed'
   | 'unread'
   | 'done'
 

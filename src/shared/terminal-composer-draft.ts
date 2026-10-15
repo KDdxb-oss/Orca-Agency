@@ -110,7 +110,10 @@ function detectTerminalComposer(
   const codexFooterIndex = findCodexFooterIndex(context)
   let afterCursor = context.afterCursor || context.rawAfterCursor
   let continuationRows = composerContinuationRows(context, afterCursor, codexFooterIndex)
-  const placeholder = isStockPlaceholder(afterCursor, continuationRows)
+  const placeholder =
+    !context.afterCursor.trim() &&
+    !context.typedRowsBelow.slice(0, continuationRows.length).some((row) => row.trim()) &&
+    isStockPlaceholder(afterCursor, continuationRows)
   if (placeholder) {
     afterCursor = ''
     continuationRows = []

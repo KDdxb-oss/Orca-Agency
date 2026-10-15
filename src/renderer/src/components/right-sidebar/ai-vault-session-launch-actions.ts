@@ -2,43 +2,37 @@ import { useCallback, useState } from 'react'
 import { toast } from 'sonner'
 import {
   buildAiVaultResumeCopyCommandForWorktree,
-  buildAiVaultResumeStartupForWorktree
+  buildAiVaultResumeStartupForWorktree,
+  type AiVaultResumeCommandSession,
+  type AiVaultResumeStartup
 } from '@/lib/ai-vault-resume-command'
-import { launchAiVaultSessionInNewTab } from '@/lib/launch-ai-vault-session'
+import { buildAiVaultForkStartupForWorktree } from '@/lib/ai-vault-session-fork-startup'
 import { useAppStore } from '@/store'
 import type { AiVaultAgent, AiVaultSession } from '../../../../shared/ai-vault-types'
-import { isAiVaultTitleAgent } from '../../../../shared/ai-vault-session-title'
-import { prepareAiVaultSessionForResume } from '@/lib/ai-vault-session-resume-preparation'
+import {
+  dropDeletedSshResumeCwd,
+  prepareAiVaultSessionForFork,
+  prepareAiVaultSessionForResume
+} from '@/lib/ai-vault-session-resume-preparation'
 import type { Worktree } from '../../../../shared/worktree/types'
 import { translate } from '@/i18n/i18n'
-import { agentLabel } from './ai-vault-session-filters'
+import { describeAiVaultCliForkFailure } from './ai-vault-session-cli-fork'
 import type { AiVaultSessionResumeTargetState } from './ai-vault-session-resume'
 import { prepareAiVaultSessionContinuation } from './ai-vault-session-continuation'
 import type { AgentSessionContinuationRequest } from '@/lib/agent-session-continuation'
 import { activateAiVaultStructuredSession } from '@/lib/activate-ai-vault-structured-session'
 import { isAgentSessionHandleProvider } from '../../../../shared/agent-session-provider-handle'
+import { newAgentLaunchRequestId } from '@/lib/agent-launch-request-id'
+import { resumeAiVaultSessionInNewChat } from './ai-vault-session-resume-in-chat-launch'
+import { resolveAiVaultTargetWorkspacePath } from './ai-vault-session-launch-target'
 import {
-  activateAiVaultResumeWorkspace,
-  resumeAiVaultSessionInNewChat
-} from './ai-vault-session-resume-in-chat-launch'
-import {
-  aiVaultResumeUnsupportedMessage,
-  resolveAiVaultSessionLaunchTarget,
-  resolveAiVaultTargetWorkspacePath
-} from './ai-vault-session-launch-target'
-import type { TabSplitDirection } from '@/store/slices/tabs'
+  launchAiVaultSessionInTerminal,
+  notifyAiVaultSessionPreparationFailure,
+  resolveAiVaultSessionLaunchTargetOrNotify,
+  type AiVaultResumePlacement
+} from './ai-vault-session-terminal-launch'
 
-export type AiVaultResumePlacement = {
-  targetGroupId?: string
-  splitDirection?: TabSplitDirection
-  onResumed?: () => void
-  validateDestination?: () => boolean
-  onSettled?: (outcome: 'created' | 'not-created' | 'unverifiable') => void
-}
-
-// Why module scope: the chat sidebar and AI Vault panel can resume the same session.
-const pendingResumes = new Set<string>()
-const RESUME_SETTLE_MS = 10_000
+export type { AiVaultResumePlacement } from './ai-vault-session-terminal-launch'
 
 export function useAiVaultSessionLaunchActions({
   activeWorktree,
@@ -66,7 +60,7 @@ export function useAiVaultSessionLaunchActions({
   )
 
   const buildResumeStartup = useCallback(
-    (session: AiVaultSession, worktreeId?: string | null) =>
+    (session: AiVaultResumeCommandSession, worktreeId?: string | null) =>
       buildAiVaultResumeStartupForWorktree({
         state: useAppStore.getState(),
         worktreeId: worktreeId ?? activeWorktreeId ?? activeWorktree?.id ?? null,
@@ -97,6 +91,25 @@ export function useAiVaultSessionLaunchActions({
     [buildResumeCommand]
   )
 
+  const launchInTerminal = useCallback(
+    (
+      session: AiVaultSession,
+      targetWorktreeId: string | undefined,
+      prepareStartup: (worktreeId: string) => Promise<AiVaultResumeStartup>,
+      describeFailure?: (message: string) => string,
+      resume?: { key: string; placement?: AiVaultResumePlacement }
+    ): void =>
+      launchAiVaultSessionInTerminal({
+        session,
+        targetWorktreeId,
+        activeWorktreeId: activeWorktreeId ?? activeWorktree?.id ?? null,
+        prepareStartup,
+        describeFailure,
+        resume
+      }),
+    [activeWorktree?.id, activeWorktreeId]
+  )
+
   const handleResume = useCallback(
     (
       session: AiVaultSession,
@@ -109,95 +122,46 @@ export function useAiVaultSessionLaunchActions({
         )
         return
       }
-      const targetId = resolveAiVaultSessionLaunchTargetOrNotify({
-        sessionFilePath: session.filePath,
-        sessionExecutionHostId: session.executionHostId,
-        activeWorktreeId: activeWorktreeId ?? activeWorktree?.id ?? null,
+      launchInTerminal(
+        session,
         targetWorktreeId,
-        targetState: targetWorktreeId ? useAppStore.getState() : targetState
-      })
-      if (!targetId) {
-        placement?.onSettled?.('not-created')
-        return
-      }
-
-      const resumeKey = JSON.stringify([session.executionHostId, session.agent, session.sessionId])
-      if (pendingResumes.has(resumeKey)) {
-        placement?.onSettled?.('not-created')
-        if (placement) {
-          toast.info('This chat is already reopening. Drop it again once it opens.')
+        (worktreeId) =>
+          prepareAiVaultSessionForResume(session)
+            .then(dropDeletedSshResumeCwd)
+            .then((preparedSession) => buildResumeStartup(preparedSession, worktreeId)),
+        undefined,
+        {
+          key: JSON.stringify([session.executionHostId, session.agent, session.sessionId]),
+          placement
         }
-        return
-      }
-      pendingResumes.add(resumeKey)
-      let settleMs = 0
-      let resumeOutcome: 'created' | 'not-created' | 'unverifiable' = 'not-created'
-
-      const showQueuedToast = (): void => {
-        toast.success(
-          translate(
-            'auto.components.right.sidebar.AiVaultPanel.agentSessionQueued',
-            '{{value0}} session queued',
-            { value0: agentLabel(session.agent) }
-          )
-        )
-      }
-      void prepareAiVaultSessionForResume(session)
-        .then(async (preparedSession) => {
-          if (placement?.validateDestination && !placement.validateDestination()) {
-            throw new Error('The destination pane was closed. Drop the chat onto an open pane.')
-          }
-          if (
-            placement?.targetGroupId &&
-            !useAppStore
-              .getState()
-              .groupsByWorktree[targetId.worktreeId]?.some(
-                (group) => group.id === placement.targetGroupId
-              )
-          ) {
-            throw new Error('The destination pane was closed. Drop the chat onto an open pane.')
-          }
-          const launchResult = launchAiVaultSessionInNewTab({
-            agent: session.agent,
-            worktreeId: targetId.worktreeId,
-            ...buildResumeStartup(preparedSession, targetId.worktreeId),
-            targetGroupId: placement?.targetGroupId,
-            splitDirection: placement?.splitDirection
-          })
-          if (launchResult.tabId === null) {
-            resumeOutcome = 'unverifiable'
-            const outcome = await launchResult.runtimeLaunch
-            if (outcome.status === 'failed') {
-              toast.error(
-                outcome.message ||
-                  translate(
-                    'auto.lib.launch.agent.in.new.tab.11cce5cc77',
-                    'Could not launch {{value0}} in a new terminal.',
-                    { value0: agentLabel(session.agent) }
-                  )
-              )
-              return
-            }
-          } else {
-            resumeOutcome = 'created'
-            linkResumedTab(launchResult.tabId, session)
-          }
-          resumeOutcome = 'created'
-          // Why: until the agent reports its session, a repeat click must not start a second copy.
-          settleMs = RESUME_SETTLE_MS
-          if (useAppStore.getState().activeWorktreeId !== targetId.worktreeId) {
-            activateAiVaultResumeWorkspace(targetId.worktreeId)
-          }
-          placement?.onResumed?.()
-          showQueuedToast()
-        })
-        .catch(notifyAiVaultSessionPreparationFailure)
-        .finally(() => {
-          setTimeout(() => pendingResumes.delete(resumeKey), settleMs)
-          placement?.onSettled?.(resumeOutcome)
-        })
+      )
     },
-    [activeWorktree?.id, activeWorktreeId, buildResumeStartup, targetState]
+    [buildResumeStartup, launchInTerminal]
+  )
+
+  // Native chat keeps the conversation it owns; the terminal gets a copy (see the fork builder).
+  const handleResumeInNewCli = useCallback(
+    (session: AiVaultSession, targetWorktreeId: string): void => {
+      const prepareStartup = async (worktreeId: string): Promise<AiVaultResumeStartup> => {
+        const startup = buildAiVaultForkStartupForWorktree({
+          state: useAppStore.getState(),
+          worktreeId,
+          session: await prepareAiVaultSessionForFork(session).then(dropDeletedSshResumeCwd),
+          commandOverride: agentCmdOverrides?.[session.agent]
+        })
+        if (!startup) {
+          throw new Error(
+            translate(
+              'auto.components.right.sidebar.AiVaultPanel.resumeInNewCliUnavailable',
+              'This session cannot be opened in the CLI.'
+            )
+          )
+        }
+        return startup
+      }
+      launchInTerminal(session, targetWorktreeId, prepareStartup, describeAiVaultCliForkFailure)
+    },
+    [agentCmdOverrides, launchInTerminal]
   )
 
   const handleResumeInNewChat = useCallback(
@@ -215,7 +179,12 @@ export function useAiVaultSessionLaunchActions({
         )
         return
       }
-      void resumeAiVaultSessionInNewChat(session, session.agent, worktreeId)
+      void resumeAiVaultSessionInNewChat(
+        session,
+        session.agent,
+        worktreeId,
+        newAgentLaunchRequestId()
+      )
     },
     [activeWorktree?.id, activeWorktreeId]
   )
@@ -267,50 +236,10 @@ export function useAiVaultSessionLaunchActions({
     buildResumeStartup,
     copyResumeCommand,
     handleResume,
+    handleResumeInNewCli,
     handleResumeInNewChat,
     handleContinueInNewSession,
     continuationRequest,
     handleContinuationDialogOpenChange
   }
-}
-
-/** Seeds the provider link title sync adds once the agent reports, so the new tab is this chat now. */
-function linkResumedTab(tabId: string, session: AiVaultSession): void {
-  const title = session.title.trim()
-  if (isAiVaultTitleAgent(session.agent) && title) {
-    useAppStore
-      .getState()
-      .setAiVaultTabTitle(tabId, { agent: session.agent, sessionId: session.sessionId, title })
-  }
-}
-
-function notifyAiVaultSessionPreparationFailure(error: unknown): void {
-  toast.error(
-    error instanceof Error
-      ? error.message
-      : translate(
-          'auto.components.right.sidebar.AiVaultPanel.prepareSessionResumeFailed',
-          'Could not prepare this session for resume.'
-        )
-  )
-}
-
-function resolveAiVaultSessionLaunchTargetOrNotify(
-  args: Parameters<typeof resolveAiVaultSessionLaunchTarget>[0]
-): Extract<ReturnType<typeof resolveAiVaultSessionLaunchTarget>, { status: 'ready' }> | null {
-  const target = resolveAiVaultSessionLaunchTarget(args)
-  if (target.status === 'missing') {
-    toast.error(
-      translate(
-        'auto.components.right.sidebar.AiVaultPanel.openWorkspaceBeforeResuming',
-        'Open a workspace before resuming a session.'
-      )
-    )
-    return null
-  }
-  if (target.status === 'unsupported') {
-    toast.error(aiVaultResumeUnsupportedMessage(target.targetStatus))
-    return null
-  }
-  return target
 }

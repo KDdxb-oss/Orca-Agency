@@ -122,11 +122,8 @@ function createCodexParseState(
 }
 
 function cloneCodexParseState(state: CodexSessionParseState): CodexSessionParseState {
-  return {
-    // previousTotals snapshots are replaced, never mutated, so sharing is safe.
-    ...state,
-    accumulator: cloneSessionAccumulator(state.accumulator)
-  }
+  // previousTotals snapshots are replaced, never mutated, so sharing is safe.
+  return { ...state, accumulator: cloneSessionAccumulator(state.accumulator) }
 }
 
 function consumeCodexRecordLine(state: CodexSessionParseState, line: string): void {
@@ -138,15 +135,15 @@ function consumeCodexRecordLine(state: CodexSessionParseState, line: string): vo
     return
   }
   const { accumulator } = state
-
   const payload = asRecord(record.payload)
-  // Why: Codex appends this when reopening an idle chat, without starting a turn.
-  if (record.type === 'event_msg' && payload?.type === 'thread_settings_applied') {
-    return
+  // Reopening an idle Codex thread writes settings, not a new conversation turn.
+  if (record.type !== 'event_msg' || payload?.type !== 'thread_settings_applied') {
+    updateTimeline(accumulator, extractString(record.timestamp))
   }
-  updateTimeline(accumulator, extractString(record.timestamp))
 
-  if (record.type === 'session_meta' && payload) {
+  // Codex keeps the first session_meta canonical; a fork copies its parent's in after it, and
+  // such a later one is ignored below like any other record type this parser does not read.
+  if (record.type === 'session_meta' && payload && !state.sawSessionMeta) {
     state.nonUserOrigin = readCodexNonUserOrigin(payload)
     if (state.nonUserOrigin) {
       return
@@ -169,7 +166,10 @@ function consumeCodexRecordLine(state: CodexSessionParseState, line: string): vo
 
   if (record.type === 'turn_context' && payload) {
     accumulator.cwd = extractString(payload.cwd) ?? accumulator.cwd
-    accumulator.model = extractModel(payload) ?? accumulator.model
+    const model = extractModel(payload)
+    if (model) {
+      accumulator.model = model
+    }
     return
   }
 

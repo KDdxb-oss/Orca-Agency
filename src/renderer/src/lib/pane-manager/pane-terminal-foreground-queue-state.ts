@@ -25,6 +25,7 @@ export function createQueueEntry(
     onBackgroundBacklogDropped: options.onBackgroundBacklogDropped,
     backgroundBacklogDropped: false,
     highPriority: true,
+    interactiveCharsRemaining: 0,
     foregroundHold: false,
     foregroundHoldSafetyDelayMs: FOREGROUND_HOLD_SAFETY_DELAY_MS,
     foregroundCoalesce: false,

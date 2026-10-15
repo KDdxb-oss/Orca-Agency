@@ -291,6 +291,13 @@ async function relaunchAndReveal(
 ): Promise<{
   relaunched: PairedElectronClient
   storeAfterRelaunch: number
+  storeAfterReveal: number
+  restoreState: {
+    hasTab: boolean
+    restoredHostId: string | null
+    primaryHostId: string | null
+    shadowHostIds: string[]
+  }
   tokenAfterReveal: boolean
 }> {
   const relaunched = await launchPairedElectronClient(offer, testInfo, 'parked-restart-relaunch', {
@@ -299,6 +306,22 @@ async function relaunchAndReveal(
   })
   await activateWorktree(relaunched.page, parked.worktreeId)
   const storeAfterRelaunch = await readStoreBufferLength(relaunched.page, parked.webTabId)
+  const restoreState = await relaunched.page.evaluate(
+    ({ worktreeId, webTabId }) => {
+      const state = window.__store?.getState()
+      return {
+        hasTab: state?.tabsByWorktree[worktreeId]?.some((tab) => tab.id === webTabId) ?? false,
+        restoredHostId: state?.restoredRuntimeHostIdByWorkspaceSessionKey[worktreeId] ?? null,
+        primaryHostId: state?.contestedPrimaryHostBySessionKey[worktreeId] ?? null,
+        shadowHostIds: Object.entries(state?.contestedHostWorkspaceSessions ?? {})
+          .filter(([, session]) =>
+            session?.tabsByWorktree?.[worktreeId]?.some((tab) => tab.id === webTabId)
+          )
+          .map(([hostId]) => hostId)
+      }
+    },
+    { worktreeId: parked.worktreeId, webTabId: parked.webTabId }
+  )
   await openPairedClientTab(relaunched.page, parked.worktreeId, parked.webTabId)
   const tokenAfterReveal = await waitForPairedPaneMarker(
     relaunched.page,
@@ -306,7 +329,8 @@ async function relaunchAndReveal(
     parked.token,
     PAINT_BUDGET_MS
   )
-  return { relaunched, storeAfterRelaunch, tokenAfterReveal }
+  const storeAfterReveal = await readStoreBufferLength(relaunched.page, parked.webTabId)
+  return { relaunched, storeAfterRelaunch, storeAfterReveal, restoreState, tokenAfterReveal }
 }
 
 async function closeCreatedTerminals(
@@ -354,6 +378,8 @@ test.describe('host retains nothing', () => {
           storeAtPark: parked.storeAtPark,
           onDiskAfterPark,
           storeAfterRelaunch: reveal.storeAfterRelaunch,
+          storeAfterReveal: reveal.storeAfterReveal,
+          restoreState: reveal.restoreState,
           tokenAfterReveal: reveal.tokenAfterReveal
         })}`
       )
@@ -365,6 +391,7 @@ test.describe('host retains nothing', () => {
         // own partition, and did not leave it stripped in 'local'. This is what fails on `main`.
         runtimePartitionHoldsCapture: runtimePartitionBufferLength(onDiskAfterPark) > 0,
         localPartitionDidNotKeepCapture: localPartitionBufferLength(onDiskAfterPark) <= 0,
+        retainedAfterReveal: reveal.storeAfterReveal > 0,
         // Secondary: the reveal may be served by the live host's retained tail rather than the
         // disk copy, so it is not the fix's oracle — it confirms relaunch and a visible pane.
         tokenAfterReveal: reveal.tokenAfterReveal
@@ -374,6 +401,7 @@ test.describe('host retains nothing', () => {
         profileSurvived: true,
         runtimePartitionHoldsCapture: true,
         localPartitionDidNotKeepCapture: true,
+        retainedAfterReveal: true,
         tokenAfterReveal: true
       })
     } finally {
@@ -409,6 +437,8 @@ test.describe('host retains nothing', () => {
           storeAtPark: parked.storeAtPark,
           onDiskAfterQuit,
           storeAfterRelaunch: reveal.storeAfterRelaunch,
+          storeAfterReveal: reveal.storeAfterReveal,
+          restoreState: reveal.restoreState,
           tokenAfterReveal: reveal.tokenAfterReveal
         })}`
       )
@@ -423,13 +453,15 @@ test.describe('host retains nothing', () => {
         // Distinguishes missing session partitions from an empty buffer.
         profileSurvived: onDiskAfterQuit.length > 0,
         runtimePartitionHoldsCapture: runtimePartitionBufferLength(onDiskAfterQuit) > 0,
-        localPartitionDidNotKeepCapture: localPartitionBufferLength(onDiskAfterQuit) <= 0
+        localPartitionDidNotKeepCapture: localPartitionBufferLength(onDiskAfterQuit) <= 0,
+        retainedAfterReveal: reveal.storeAfterReveal > 0
       }).toEqual({
         tokenBeforePark: true,
         capturedAtPark: true,
         profileSurvived: true,
         runtimePartitionHoldsCapture: true,
-        localPartitionDidNotKeepCapture: true
+        localPartitionDidNotKeepCapture: true,
+        retainedAfterReveal: true
       })
     } finally {
       const live = relaunched ?? first

@@ -841,6 +841,25 @@ describe('terminal-parked-tab-watchers', () => {
       )
     })
 
+    it('covers a folder workspace tab only after its local PTY gains an authoritative snapshot', async () => {
+      const folderId = 'folder:folder-1'
+      const folderPtyId = `${folderId}@@session-1`
+      clearTerminalProviderSnapshotCapabilities()
+      mockStoreState.terminalLayoutsByTabId[TAB_ID] = {
+        root: { type: 'leaf', leafId: LEAF_ID },
+        activeLeafId: LEAF_ID,
+        expandedLeafId: null,
+        ptyIdsByLeafId: { [LEAF_ID]: folderPtyId }
+      }
+      const tab = { id: TAB_ID, ptyId: folderPtyId }
+      expect(canWatcherCoverParkedTerminalTab(folderId, tab)).toBe(false)
+
+      await synchronizeTerminalProviderSnapshotCapabilities([folderPtyId], async (ids) =>
+        ids.map((id) => ({ id, authoritative: true }))
+      )
+      expect(canWatcherCoverParkedTerminalTab(folderId, tab)).toBe(true)
+    })
+
     it('rejects a capture containing a legacy non-UUID leaf id', () => {
       capturePanes([
         { ptyId: PTY_ID, paneId: 1, leafId: 'legacy-leaf-1', drivesTabTitle: true },

@@ -241,7 +241,7 @@ export function collectPinnedDaemonVersions(runtimeDir: string): PinnedDaemonVer
     return { status: 'unverifiable', reason: 'the daemon runtime directory could not be read' }
   }
   for (const entry of entries) {
-    if (!entry.isFile() || !/^daemon-v\d+\.pid$/.test(entry.name)) {
+    if (!entry.isFile() || !/^daemon-v\d+(?:-g[0-9a-f]{12})?\.pid$/.test(entry.name)) {
       continue
     }
     let contents

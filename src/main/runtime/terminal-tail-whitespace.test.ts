@@ -1,9 +1,56 @@
 import { performance } from 'node:perf_hooks'
 import { describe, expect, it } from 'vitest'
 import { appendNormalizedToTailBuffer } from './terminal-tail-buffer'
+import { normalizeTerminalChunk } from './terminal-ansi-normalization'
 import { trimTerminalLineRight } from './terminal-tail-line-controls'
 
 describe('terminal redraw whitespace', () => {
+  it('retains a completed line when a CRLF is split across PTY chunks', () => {
+    const first = normalizeTerminalChunk('FLOODED:token\r')
+    const partial = appendNormalizedToTailBuffer([], '', first.text)
+    const second = normalizeTerminalChunk('\n', first.pendingAnsi)
+    const completed = appendNormalizedToTailBuffer(partial.lines, partial.partialLine, second.text)
+    expect(completed.lines).toEqual(['FLOODED:token'])
+    expect(completed.newlyCompletedLines).toEqual(['FLOODED:token'])
+  })
+
+  it('keeps a trailing carriage return as a redraw when the next chunk is text', () => {
+    const first = normalizeTerminalChunk('progress 10%\r')
+    expect(first).toEqual({ text: 'progress 10%', pendingAnsi: '\r' })
+    expect(normalizeTerminalChunk('progress 20%', first.pendingAnsi)).toEqual({
+      text: '\rprogress 20%',
+      pendingAnsi: ''
+    })
+  })
+
+  it.each([
+    ['repeated carriage returns', ['X\r\r', '\n']],
+    ['split color sequence', ['X\r\x1b[3', '1m\n']],
+    ['split escape introducer', ['X\r\x1b', '[31m\n']],
+    ['complete color sequence', ['X\r\x1b[31m', '\n']],
+    ['title sequence', ['X\r\x1b]0;title\u0007', '\n']],
+    ['cursor visibility sequence', ['X\r\x1b[?25l', '\n']]
+  ])('retains a completed line across %s', (_name, chunks) => {
+    let pendingAnsi = ''
+    let lines: string[] = []
+    let partialLine = ''
+    for (const chunk of chunks) {
+      const normalized = normalizeTerminalChunk(chunk, pendingAnsi)
+      pendingAnsi = normalized.pendingAnsi
+      const next = appendNormalizedToTailBuffer(lines, partialLine, normalized.text)
+      lines = next.lines
+      partialLine = next.partialLine
+    }
+    expect(lines).toEqual(['X'])
+    expect(partialLine).toBe('')
+    expect(pendingAnsi).toBe('')
+  })
+
+  it('normalizes a long carriage-return redraw in linear time', () => {
+    const normalized = normalizeTerminalChunk(`X${'\r'.repeat(64_000)}Y`)
+    expect(normalized).toEqual({ text: 'X\rY', pendingAnsi: '' })
+  })
+
   it.each([
     ['hello \t', 'hello'],
     [' \thello \t world \t', ' \thello \t world'],

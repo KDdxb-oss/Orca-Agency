@@ -11,6 +11,7 @@ import {
   migrateWorkspaceSessionTerminalScrollbackSnapshotsAsync
 } from '../../terminal-scrollback-snapshot-async-migration'
 import { preserveRuntimeAuthoredWorkspaceSessionFields } from '../runtime-authored-workspace-session-fields'
+import { admitLocalWorkspaceTerminalMoves } from '../../runtime/workspace-session-terminal-moves'
 import { registerPersistedPaneKeyAlias } from '../restoring-sessions/pane-alias-normalization'
 import {
   normalizeWorkspaceSessionPaneIdentities,
@@ -34,7 +35,12 @@ export function setLocalWorkspaceSession(
   deferSnapshotFiles = false
 ): void {
   const context = getSessionSnapshotOperationsContext(owner)
-  const prior = context.runtime.state.workspaceSession
+  const admission = admitLocalWorkspaceTerminalMoves(
+    session,
+    context.runtime.state.workspaceSession
+  )
+  const prior = admission.prior
+  session = admission.session
   // Why here and not at the callers: the before-unload stage path writes the renderer's payload
   // straight through, so a per-caller guard leaves the quit write erasing runtime-authored rows.
   session = preserveRuntimeAuthoredWorkspaceSessionFields(session, prior)
@@ -104,7 +110,8 @@ export function setLocalWorkspaceSession(
     deleteRemovedTerminalScrollbackSnapshots(
       prior,
       session,
-      context.runtime.terminalScrollbackSnapshotStorage
+      context.runtime.terminalScrollbackSnapshotStorage,
+      retainedScrollbackRefs(context.runtime)
     )
   }
   context.runtime.state.workspaceSession = session
@@ -140,7 +147,8 @@ export function enqueueTerminalScrollbackSnapshotWork(
           await deleteRemovedTerminalScrollbackSnapshotsAsync(
             prior,
             context.runtime.state.workspaceSession,
-            context.runtime.terminalScrollbackSnapshotStorage
+            context.runtime.terminalScrollbackSnapshotStorage,
+            retainedScrollbackRefs(context.runtime)
           )
         }
         return
@@ -159,14 +167,16 @@ export function enqueueTerminalScrollbackSnapshotWork(
         await deleteRemovedTerminalScrollbackSnapshotsAsync(
           migrated,
           current,
-          context.runtime.terminalScrollbackSnapshotStorage
+          context.runtime.terminalScrollbackSnapshotStorage,
+          retainedScrollbackRefs(context.runtime)
         )
       }
       if (current) {
         await deleteRemovedTerminalScrollbackSnapshotsAsync(
           prior,
           current,
-          context.runtime.terminalScrollbackSnapshotStorage
+          context.runtime.terminalScrollbackSnapshotStorage,
+          retainedScrollbackRefs(context.runtime)
         )
       }
     })
@@ -179,4 +189,12 @@ export function enqueueTerminalScrollbackSnapshotWork(
       }
     })
   context.runtime.pendingSnapshotFileWork = work
+}
+
+function retainedScrollbackRefs(runtime: {
+  retainedScrollbackRefsByMigrationId: ReadonlyMap<string, ReadonlySet<string>>
+}): ReadonlySet<string> {
+  return new Set(
+    [...runtime.retainedScrollbackRefsByMigrationId.values()].flatMap((refs) => [...refs])
+  )
 }

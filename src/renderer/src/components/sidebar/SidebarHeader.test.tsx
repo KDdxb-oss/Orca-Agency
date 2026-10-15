@@ -32,6 +32,7 @@ type MockState = {
     experimentalAgentDashboardPopout?: boolean
     agentsSidebarIntroShown?: boolean
     agentsSidebarMigratedFromExperimental?: boolean
+    chatSidebar?: { view: 'chats' }
   }
 }
 
@@ -49,6 +50,10 @@ vi.mock('@/components/dashboard/useAgentBucketCounts', () => ({
 
 vi.mock('./SidebarWorkspaceOptionsMenu', () => ({
   default: () => <button aria-label="Workspace options" type="button" />
+}))
+
+vi.mock('./ChatSidebarOptions', () => ({
+  ChatSidebarOptions: () => <button aria-label="Chat grouping and folder filters" type="button" />
 }))
 
 vi.mock('./workspace-options-menu-items', () => ({
@@ -270,7 +275,7 @@ describe('SidebarHeader', () => {
     )
   })
 
-  it('drops both project actions in the agents view, which lists activity, not projects', () => {
+  it('swaps only the options slot in the agents view so no header button shifts', () => {
     mockState.sidebarBody = 'agents'
     act(() => {
       root.render(<SidebarHeader onWorkspaceBoardMenuOpenChange={vi.fn()} />)
@@ -279,7 +284,19 @@ describe('SidebarHeader', () => {
     expect(container.querySelector('[aria-label="Turn off activity view"]')).toBeTruthy()
     expect(container.querySelector('[aria-label="New workspace"]')).toBeTruthy()
     expect(container.querySelector('[aria-label="Workspace options"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Add project"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Add project"]')).toBeTruthy()
+  })
+
+  it('shows chat grouping and filters in Chats while keeping workspace actions', () => {
+    mockState.settings = { chatSidebar: { view: 'chats' } }
+    act(() => {
+      root.render(<SidebarHeader onWorkspaceBoardMenuOpenChange={vi.fn()} />)
+    })
+
+    expect(headerButton('Chat grouping and folder filters')).toBeTruthy()
+    expect(container.querySelector('[aria-label="Workspace options"]')).toBeNull()
+    expect(headerButton('Add project')).toBeTruthy()
+    expect(headerButton('New workspace')).toBeTruthy()
   })
 
   it('keeps the activity bell and actions on one row at the default sidebar width', () => {

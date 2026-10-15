@@ -31,6 +31,7 @@ import type {
 } from '../../../shared/runtime-types'
 import { getWindowParkVisible, subscribeWindowParkVisibility } from './window-park-visibility'
 import { getEntryTabId } from './agent-hibernation-pane-eligibility'
+import { verifyEmptyAgentComposer } from './agent-hibernation-composer-check'
 
 export const AGENT_HIBERNATION_TICK_MS = 60 * 1000
 
@@ -195,9 +196,12 @@ async function collectRuntimePtyLiveness(
   return { runtimeLivePtyIdsByWorktreeId, runtimeLivenessRequiredWorktreeIds }
 }
 
-async function currentCandidates(now: number, targetWorktreeId?: string) {
-  const runtimeLiveness = await collectRuntimePtyLiveness(useAppStore.getState(), targetWorktreeId)
-  const freshState = useAppStore.getState()
+function candidatesFromLivenessSample(
+  freshState: AppState,
+  now: number,
+  runtimeLiveness: RuntimePtyLivenessSample,
+  targetWorktreeId?: string
+): AgentHibernationCandidate[] {
   // Why: age the PTY bindings from the same state the plan is built from, so a pane
   // observed for the first time this pass cannot also be judged long-idle in it.
   observeHibernationPtyBindings({
@@ -224,6 +228,19 @@ async function currentCandidates(now: number, targetWorktreeId?: string) {
     }))
 }
 
+async function currentCandidates(now: number, targetWorktreeId?: string) {
+  const runtimeLiveness = await collectRuntimePtyLiveness(useAppStore.getState(), targetWorktreeId)
+  return {
+    candidates: candidatesFromLivenessSample(
+      useAppStore.getState(),
+      now,
+      runtimeLiveness,
+      targetWorktreeId
+    ),
+    runtimeLiveness
+  }
+}
+
 async function hibernatePaneIfStillEligible(
   confirmedCandidate: AgentHibernationCandidate
 ): Promise<void> {
@@ -231,9 +248,11 @@ async function hibernatePaneIfStillEligible(
   if (coordinator.shuttingDownCandidateIds.has(id)) {
     return
   }
+  const initialState = useAppStore.getState()
+  const runtimeEnvironmentId = getRuntimeEnvironmentIdForWorktree(initialState, worktreeId)
   // Why: the confirmed pane can only be authorized by its owning worktree. A
   // global sweep here made C pane teardowns issue C×W fresh runtime listings.
-  const candidates = await currentCandidates(coordinator.now(), worktreeId)
+  const { candidates, runtimeLiveness } = await currentCandidates(coordinator.now(), worktreeId)
   const stillEligible = candidates.some(
     (candidate) =>
       candidate.id === confirmedCandidate.id && candidate.signature === confirmedCandidate.signature
@@ -241,11 +260,33 @@ async function hibernatePaneIfStillEligible(
   if (!stillEligible) {
     return
   }
+  if (
+    getRuntimeEnvironmentIdForWorktree(useAppStore.getState(), worktreeId) !== runtimeEnvironmentId
+  ) {
+    return
+  }
+  // Why: the liveness refresh above can take time. Check the composer last so
+  // text entered during that refresh cannot be discarded by the shutdown.
+  if (!(await verifyEmptyAgentComposer(confirmedCandidate, runtimeEnvironmentId))) {
+    return
+  }
+  // Why: input, foreground, agent status, and mobile ownership may change while the
+  // two screen RPCs are pending. Reuse the fresh host liveness sample and re-plan
+  // synchronously, leaving no renderer await between this check and shutdown.
+  const finalState = useAppStore.getState()
+  if (
+    getRuntimeEnvironmentIdForWorktree(finalState, worktreeId) !== runtimeEnvironmentId ||
+    !candidatesFromLivenessSample(finalState, coordinator.now(), runtimeLiveness, worktreeId).some(
+      (candidate) =>
+        candidate.id === confirmedCandidate.id &&
+        candidate.signature === confirmedCandidate.signature
+    )
+  ) {
+    return
+  }
   coordinator.shuttingDownCandidateIds.add(id)
   try {
-    const state = useAppStore.getState()
-    const runtimeEnvironmentId = getRuntimeEnvironmentIdForWorktree(state, worktreeId)
-    await state.shutdownCompletedAgentPaneForHibernation(worktreeId, {
+    await finalState.shutdownCompletedAgentPaneForHibernation(worktreeId, {
       paneKey: confirmedCandidate.paneKey,
       tabId: confirmedCandidate.tabId,
       leafId: confirmedCandidate.leafId,
@@ -269,7 +310,7 @@ export async function runAgentHibernationTick(): Promise<void> {
   try {
     const plan = confirmAgentHibernationCandidates(
       coordinator.confirmationState,
-      await currentCandidates(coordinator.now())
+      (await currentCandidates(coordinator.now())).candidates
     )
     coordinator.confirmationState = plan.confirmationState
     // Why: drain sequentially. Each shutdown re-runs a full runtime-liveness sweep and

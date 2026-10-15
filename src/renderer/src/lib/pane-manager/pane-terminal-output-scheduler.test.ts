@@ -310,7 +310,7 @@ describe('pane terminal output scheduler', () => {
     expect(terminals[2].write).toHaveBeenCalledWith('pane-2', expect.any(Function))
   })
 
-  it('drains active foreground backlog before older background terminal backlog', async () => {
+  it('drains interactive foreground output before older background terminal backlog', async () => {
     vi.useFakeTimers()
     const { writeTerminalOutput } = await loadScheduler()
     const backgroundA = createTerminal()
@@ -321,7 +321,8 @@ describe('pane terminal output scheduler', () => {
     writeTerminalOutput(backgroundB, 'background-b', { foreground: false })
     writeTerminalOutput(active, 'active', {
       foreground: true,
-      latencySensitive: false
+      latencySensitive: true,
+      coalesceForeground: true
     })
 
     vi.advanceTimersByTime(0)
@@ -332,6 +333,34 @@ describe('pane terminal output scheduler', () => {
     )
     expect(active.write.mock.invocationCallOrder[0]).toBeLessThan(
       backgroundB.write.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('drains an interactive pane before visible panes streaming noninteractive output', async () => {
+    vi.useFakeTimers()
+    const { writeTerminalOutput, queuedByTerminal } = await loadScheduler()
+    const streaming = [createTerminal(), createTerminal(), createTerminal()]
+    const interactive = createTerminal()
+
+    streaming.forEach((terminal, index) => {
+      writeTerminalOutput(terminal, `stream-${index}`, {
+        foreground: true,
+        latencySensitive: false
+      })
+      expect(queuedByTerminal.get(terminal)?.interactiveCharsRemaining).toBe(0)
+      expect(queuedByTerminal.get(terminal)?.highPriority).toBe(true)
+    })
+    writeTerminalOutput(interactive, 'echo', {
+      foreground: true,
+      latencySensitive: true,
+      coalesceForeground: true
+    })
+
+    vi.advanceTimersByTime(0)
+
+    expect(interactive.write).toHaveBeenCalledWith('echo', expect.any(Function))
+    expect(interactive.write.mock.invocationCallOrder[0]).toBeLessThan(
+      streaming[0].write.mock.invocationCallOrder[0]
     )
   })
 

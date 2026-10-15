@@ -141,6 +141,7 @@ export function buildChatSidebarRows(
         timestamp: sessionAt,
         turnStartedAt: chatSessionHumanTurnTime(session),
         activityFromState: false,
+        promptBackedWorking: false,
         state: 'idle',
         completed: false,
         ownsWorkspaceName: false,
@@ -163,6 +164,7 @@ export function buildChatSidebarRows(
   for (const session of sessionMap.values()) {
     if (
       session.subagent ||
+      session.isHeadless ||
       (!rememberedSessions.has(session) && !isAiVaultSessionResumableContent(session))
     ) {
       continue
@@ -217,6 +219,7 @@ export function buildChatSidebarRows(
       timestamp: sessionAt,
       turnStartedAt: chatSessionHumanTurnTime(session),
       activityFromState: false,
+      promptBackedWorking: false,
       state: 'idle',
       completed: false,
       ownsWorkspaceName: false,

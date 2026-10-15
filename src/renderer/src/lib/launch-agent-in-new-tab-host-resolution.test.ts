@@ -4,8 +4,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockStructuredLaunch = vi.hoisted(() => vi.fn(() => null))
-vi.mock('@/lib/launch-agent-in-new-tab-structured', () => ({
-  launchAgentInStructuredNewTab: mockStructuredLaunch
+vi.mock('@/lib/structured-agent-session-provisional-tab', () => ({
+  beginStructuredAgentSessionProvisionalLaunch: mockStructuredLaunch
 }))
 
 const mockCreateTab = vi.fn()
@@ -98,7 +98,12 @@ function worktreeOn(hostId: string, path: string): StoreWorktree {
 
 async function launchOnLinux(): Promise<void> {
   const { launchAgentInNewTab } = await import('./launch-agent-in-new-tab')
-  launchAgentInNewTab({ agent: 'claude-agent-teams', worktreeId: 'wt-1', launchPlatform: 'linux' })
+  launchAgentInNewTab({
+    requestId: 'request-1',
+    agent: 'claude-agent-teams',
+    worktreeId: 'wt-1',
+    launchPlatform: 'linux'
+  })
 }
 
 function queuedCommand(): string {
@@ -133,6 +138,7 @@ describe('launchAgentInNewTab execution host resolution', () => {
       worktreeId: 'wt-1',
       activate: false,
       agentSessionLaunchPlan: adoptAgentSessionLaunchVerdict({
+        requestId: 'structured-background-launch',
         route: 'structured-native-chat',
         agent: 'codex',
         worktreeId: 'wt-1',
@@ -180,6 +186,7 @@ describe('launchAgentInNewTab execution host resolution', () => {
     store.getKnownWorktreeById.mockReturnValue(worktreeOn('ssh:remote', '/srv'))
     const { launchAgentInNewTab } = await import('./launch-agent-in-new-tab')
     launchAgentInNewTab({
+      requestId: 'chosen-ssh-host-launch',
       agent: 'claude-agent-teams',
       worktreeId: 'wt-1',
       executionHostId: 'ssh:remote',

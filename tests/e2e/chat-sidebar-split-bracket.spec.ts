@@ -67,7 +67,7 @@ test('split windows stay bracketed and adjacent until unsplit', async ({
   const review = rows.filter({ hasText: 'Review of working chat' })
   const partner = rows.filter({ hasText: 'Old split partner' })
   const independent = rows.filter({ hasText: 'Recent independent chat' })
-  await expect(orcaPage.getByText('In progress (4)', { exact: true })).toBeVisible()
+  await expect(orcaPage.getByText('In Progress (4)', { exact: true })).toBeVisible()
   await expect(rows).toHaveCount(4)
   await expect(rows.nth(0)).toContainText('Working split chat')
   await expect(rows.nth(1)).toContainText('Review of working chat')

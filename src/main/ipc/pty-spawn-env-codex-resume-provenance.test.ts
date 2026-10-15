@@ -104,21 +104,28 @@ describe('registerPtyHandlers', () => {
 
       async function spawnCodexResume(
         transcriptPath: string | undefined,
-        overrides: { command?: string; env?: Record<string, string> } = {}
+        overrides: { command?: string; env?: Record<string, string>; replacesPtyId?: string } = {}
       ): Promise<{ agentResumeUnavailable?: true }> {
-        return (await handlers.get('pty:spawn')!(null, {
+        const result: unknown = await handlers.get('pty:spawn')!(null, {
           cols: 80,
           rows: 24,
           cwd: '/tmp',
           command: overrides.command ?? `codex 'resume' '${RESUME_SESSION_ID}'`,
           ...(overrides.env ? { env: overrides.env } : {}),
+          ...(overrides.replacesPtyId ? { replacesPtyId: overrides.replacesPtyId } : {}),
           launchAgent: 'codex',
           resumeProviderSession: {
             key: 'session_id',
             id: RESUME_SESSION_ID,
             ...(transcriptPath ? { transcriptPath } : {})
           }
-        })) as { agentResumeUnavailable?: true }
+        })
+        return typeof result === 'object' &&
+          result !== null &&
+          'agentResumeUnavailable' in result &&
+          result.agentResumeUnavailable === true
+          ? { agentResumeUnavailable: true }
+          : {}
       }
 
       /** A daemon-shaped provider: the only local path that reports reattach results and
@@ -189,6 +196,24 @@ describe('registerPtyHandlers', () => {
         const spawned = await spawnCodexResume(ORIGIN_ROLLOUT)
 
         expect(spawned.agentResumeUnavailable).toBe(true)
+      })
+      it('replaces a stale pane in the selected home without resuming another account', async () => {
+        const daemonSpawn = setupResumeDaemonProvider()
+        registerWithTrustedHomes([ORIGIN_HOME], OTHER_HOME)
+        const spawned = await spawnCodexResume(ORIGIN_ROLLOUT, { replacesPtyId: 'old-pty' })
+        const options = daemonSpawn.mock.calls.at(-1)![0]
+        expect(options.command).toBe('codex')
+        expect(options.env.CODEX_HOME).toBe(OTHER_HOME)
+        expect(spawned.agentResumeUnavailable).toBe(true)
+      })
+      it('replaces a pane with the same verified conversation in the current home', async () => {
+        const daemonSpawn = setupResumeDaemonProvider()
+        registerWithTrustedHomes([ORIGIN_HOME], ORIGIN_HOME)
+        const spawned = await spawnCodexResume(ORIGIN_ROLLOUT, { replacesPtyId: 'old-pty' })
+        const options = daemonSpawn.mock.calls.at(-1)![0]
+        expect(options.command).toBe(`codex 'resume' '${RESUME_SESSION_ID}'`)
+        expect(options.env.CODEX_HOME).toBe(ORIGIN_HOME)
+        expect(spawned.agentResumeUnavailable).toBeUndefined()
       })
       it('stays silent for cross-agent provenance on a pane relabeled codex', async () => {
         registerWithTrustedHomes([OTHER_HOME], OTHER_HOME)
@@ -278,7 +303,7 @@ describe('registerPtyHandlers', () => {
             await Promise.resolve()
             vi.runAllTimers()
 
-            expect(mockProc.proc.write).toHaveBeenCalledWith(`${command}\n`)
+            expect(mockProc.proc.write).toHaveBeenCalledWith(`${command}\r`)
             expect(spawned.agentResumeUnavailable).toBeUndefined()
           } finally {
             vi.useRealTimers()

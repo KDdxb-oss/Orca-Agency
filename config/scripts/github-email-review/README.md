@@ -10,4 +10,6 @@ Commands: `setup`, `listen`, `pending`, `replay --message-id ID`, `heartbeat --r
 
 Workflow failure notifications launch the reviewed hotfix pipeline immediately. It uses the weekly updater's exclusive lock, Codex and Claude review loop, installation, restart, retained-chat verification and publication checks. Failures stay open until the repair is verified; they are not deferred to Saturday.
 
+Record a heartbeat after acquiring the batch and every two minutes while review makes progress. The three-minute monitor allows a five-minute completion grace after the last heartbeat or decision for a reported completed run with unfinished items. Failed dispatches, completed decisions, and the four-hour cap still release the lease. Token-specific `finish` refuses expired ownership before any public API call; deliberate tokenless manual review remains available.
+
 Run the focused tests with `python -m unittest test_email_bridge`. They cover routing, cross-linked subjects, exact-thread checks, chunk delivery, batch recovery, pagination and duplicate prevention. The runtime requires Python, websocket-client, pywin32, the existing Composio CLI, GitHub CLI and Orca CLI.

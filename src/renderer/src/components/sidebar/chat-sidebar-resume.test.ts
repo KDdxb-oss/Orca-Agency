@@ -77,6 +77,20 @@ describe('resuming a chat from the list', () => {
     const session = chatSession('a', { agent: 'claude', cwd: chatWorktree.path })
     expect(chatResumeSession(chatRow({ session }))?.resumeCwd).toBe(chatWorktree.path)
   })
+  it('keeps local WSL Claude sessions on their recorded Linux resume path', () => {
+    const session = chatSession('wsl', {
+      agent: 'claude',
+      executionHostPlatform: 'linux',
+      cwd: '/home/me/project',
+      filePath:
+        '\\\\wsl.localhost\\Ubuntu\\home\\me\\.claude\\projects\\-home-me-project\\wsl.jsonl'
+    })
+    const wslWorktree = {
+      ...moved,
+      path: '\\\\wsl.localhost\\Ubuntu\\home\\me\\project'
+    }
+    expect(chatResumeSession(chatRow({ session, worktree: wslWorktree }))).toBe(session)
+  })
 })
 
 describe('keeping live chats after their tab closes', () => {
@@ -137,6 +151,35 @@ describe('keeping live chats after their tab closes', () => {
     expect(freshestChatSnapshot(base, later, true)).toMatchObject({
       title: 'New',
       updatedAt: later.updatedAt
+    })
+  })
+  it('saves a hook-verified relocated Claude transcript before the time throttle expires', () => {
+    const base = chatSession('c1', {
+      agent: 'claude',
+      cwd: '/old',
+      filePath: '/home/me/.claude/projects/-old/c1.jsonl'
+    })
+    const previous = {
+      executionHostId: base.executionHostId,
+      agent: base.agent,
+      sessionId: base.sessionId,
+      title: base.title,
+      cwd: base.cwd!,
+      filePath: base.filePath,
+      codexHome: base.codexHome,
+      createdAt: base.createdAt,
+      updatedAt: base.updatedAt,
+      modifiedAt: base.modifiedAt
+    }
+    const current = {
+      ...previous,
+      cwd: '/new',
+      filePath: '/home/me/.claude/projects/-new/c1.jsonl',
+      updatedAt: new Date(Date.parse(base.updatedAt) + 1_000).toISOString()
+    }
+    expect(freshestChatSnapshot(previous, current, true)).toMatchObject({
+      cwd: '/new',
+      filePath: current.filePath
     })
   })
 

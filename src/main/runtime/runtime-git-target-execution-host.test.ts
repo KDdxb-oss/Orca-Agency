@@ -69,6 +69,30 @@ describe('runtime Git target execution host', () => {
     mocks.getStatus.mockReset().mockResolvedValue({ entries: [] })
   })
 
+  it('skips Git status for a folder on its authoritative host', async () => {
+    const provider = register('m4air')
+    const runtime = makeRuntime(
+      [{ id: 'repo-shared', path: REMOTE_PATH, kind: 'folder', executionHostId: 'ssh:m4air' }],
+      'ssh:m4air'
+    )
+    expect(await runtime.getRuntimeGitStatus(`id:${WORKTREE_ID}`)).toEqual({
+      entries: [],
+      conflictOperation: 'unknown'
+    })
+    expect(provider.getStatus).not.toHaveBeenCalled()
+    expect(mocks.getStatus).not.toHaveBeenCalled()
+  })
+
+  it('does not use a rival host folder row to suppress the authoritative host Git status', async () => {
+    const provider = register('m4air')
+    const runtime = makeRuntime(
+      [{ id: 'repo-shared', path: REMOTE_PATH, kind: 'folder', connectionId: 'openclaw' }],
+      'ssh:m4air'
+    )
+    await runtime.getRuntimeGitStatus(`id:${WORKTREE_ID}`)
+    expect(provider.getStatus).toHaveBeenCalledWith(REMOTE_PATH)
+  })
+
   afterEach(() => {
     for (const connectionId of registered.splice(0)) {
       unregisterSshGitProvider(connectionId)

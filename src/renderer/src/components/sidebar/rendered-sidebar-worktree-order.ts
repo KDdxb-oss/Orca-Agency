@@ -9,11 +9,12 @@ import { getRepoMapFromState, getWorktreeMapFromState } from '@/store/selectors'
 import { getProjectHostSetupProjectionFromState } from '@/store/project-host-setup-selector'
 import { buildRows } from './worktree-list/grouping/build-rows'
 import { getPinnedWorktreeDisplayPolicy } from './worktree-list/grouping/row-types'
-import { addHostSectionRows } from './host-section-rows'
+import { addHostSectionRows, type HostSectionRow } from './host-section-rows'
 import { orderHostSectionOptions } from './host-section-order'
 import { buildSidebarHostOptions } from './sidebar-host-options'
 import { getLogicalRepoOrderRankById } from './project-header-drop'
 import { getRenderedWorktreesInSidebarOrder } from './worktree-sidebar-row-preference'
+import { buildWorktreeComparator } from './smart-sort'
 import { selectWorktreeListReviewCacheInputs } from './worktree-list/listing/review-cache-inputs'
 import {
   filterFolderWorkspacesForVisibleHosts,
@@ -39,6 +40,17 @@ export function computeRenderedSidebarWorktrees(
   state: AppState,
   visibleWorktrees: readonly Worktree[]
 ): Worktree[] {
+  return getRenderedWorktreesInSidebarOrder(
+    computeRenderedSidebarRows(state, visibleWorktrees),
+    getPinnedWorktreeDisplayPolicy(state.settings)
+  )
+}
+
+/** The sidebar's row model, replayed from the store without mounting WorktreeList. */
+export function computeRenderedSidebarRows(
+  state: AppState,
+  visibleWorktrees: readonly Worktree[]
+): HostSectionRow[] {
   const defaultHostId = getSettingsFocusedExecutionHostId(state.settings)
   const pinnedDisplayPolicy = getPinnedWorktreeDisplayPolicy(state.settings)
   const projection = getProjectHostSetupProjectionFromState(state)
@@ -52,11 +64,12 @@ export function computeRenderedSidebarWorktrees(
     state.groupBy,
     state.worktreeCardProperties
   )
+  const repoMap = getRepoMapFromState(state)
 
   const rows = buildRows(
     state.groupBy,
     [...visibleWorktrees],
-    getRepoMapFromState(state),
+    repoMap,
     prCache,
     state.collapsedGroups,
     getLogicalRepoOrderRankById(state.repos.map((repo) => repo.id)),
@@ -82,14 +95,17 @@ export function computeRenderedSidebarWorktrees(
     // Why no hostLabelById: it only feeds display-only host context labels, never row order.
     undefined,
     defaultHostId,
-    pinnedDisplayPolicy
+    pinnedDisplayPolicy,
+    state.groupBy === 'workspace-status' && state.sortBy === 'recent'
+      ? buildWorktreeComparator('recent', repoMap, Date.now(), new Map())
+      : undefined
   )
 
   // Why lazy: with no host filter, addHostSectionRows is a pass-through, so skip building the whole host registry on a keystroke.
   // Deliberately a superset of its internal guards — on <=1 host it still no-ops, wasting only the registry build.
   const needsHostSections =
     state.workspaceHostScope !== ALL_EXECUTION_HOSTS_SCOPE || state.visibleWorkspaceHostIds != null
-  const sectionRows = needsHostSections
+  return needsHostSections
     ? addHostSectionRows({
         rows,
         hostOptions: orderHostSectionOptions(
@@ -112,8 +128,6 @@ export function computeRenderedSidebarWorktrees(
         preferProjectGrouping: true
       })
     : rows
-
-  return getRenderedWorktreesInSidebarOrder(sectionRows, pinnedDisplayPolicy)
 }
 
 export function computeRenderedSidebarWorktreeOrder(

@@ -13,6 +13,7 @@
  * grew monotonically. The single `removeWorktree` path already routes through
  * `purgeWorktreeTerminalState`; project removal did not.
  */
+import { getRepoExecutionHostId } from '../../../../shared/execution-host'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createTestStore, makeTab, makeWorktree } from './store-test-helpers'
 import type { Repo } from '../../../../shared/repo-types'
@@ -28,7 +29,7 @@ beforeEach(() => {
   ptyKill.mockReset()
   vi.stubGlobal('window', {
     api: {
-      repos: { remove: reposRemove },
+      repos: { removeForHost: reposRemove },
       pty: { kill: ptyKill },
       runtimeEnvironments: { call: vi.fn() }
     }
@@ -71,7 +72,7 @@ describe('removeProject purges per-worktree state (leak regression)', () => {
     const store = createTestStore()
     seedTwoProjects(store)
 
-    await store.getState().removeProject(repo1.id)
+    await store.getState().removeProject(repo1.id, { hostId: getRepoExecutionHostId(repo1) })
 
     const s = store.getState()
     // Removed project's worktree is purged from every map.
@@ -98,7 +99,7 @@ describe('removeProject purges per-worktree state (leak regression)', () => {
     })
     const order = store.getState().sessionsGridTabOrder
     const hidden = store.getState().sessionsGridHiddenTabIds
-    await store.getState().removeProject(repo1.id)
+    await store.getState().removeProject(repo1.id, { hostId: getRepoExecutionHostId(repo1) })
     expect(store.getState().sessionsGridTabOrder).toBe(order)
     expect(store.getState().sessionsGridHiddenTabIds).toBe(hidden)
   })
@@ -110,7 +111,7 @@ describe('removeProject purges per-worktree state (leak regression)', () => {
     const hidden = ['tab-w2']
     store.setState({ sessionsGridTabOrder: order, sessionsGridHiddenTabIds: hidden })
 
-    await store.getState().removeProject(repo1.id)
+    await store.getState().removeProject(repo1.id, { hostId: getRepoExecutionHostId(repo1) })
 
     // An unrelated removal must not read as a persisted-UI edit and schedule a write.
     const s = store.getState()
@@ -122,7 +123,7 @@ describe('removeProject purges per-worktree state (leak regression)', () => {
     const store = createTestStore()
     seedTwoProjects(store)
 
-    await store.getState().removeProject(repo1.id)
+    await store.getState().removeProject(repo1.id, { hostId: getRepoExecutionHostId(repo1) })
 
     const s = store.getState()
     // Surviving project's worktree state is untouched (guard over-eviction).

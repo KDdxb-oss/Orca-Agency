@@ -178,6 +178,7 @@ export function buildMirroredTerminalTabs(
         ...(quickCommandLabel ? { quickCommandLabel } : {}),
         ...(startupCwd ? { startupCwd } : {}),
         customTitle: existing?.customTitle ?? null,
+        ...(existing?.sidebarTitleId ? { sidebarTitleId: existing.sidebarTitleId } : {}),
         color,
         isPinned,
         ...(viewMode ? { viewMode } : {}),

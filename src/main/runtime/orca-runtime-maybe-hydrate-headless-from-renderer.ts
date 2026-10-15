@@ -4,9 +4,6 @@ import { OrcaRuntimeWithSerializeMainTerminalBuffer } from './orca-runtime-seria
 import { observeFreebuffTerminalStatus } from './freebuff-terminal-status'
 import { MOBILE_SUBSCRIBE_SCROLLBACK_ROWS } from './scrollback-limits'
 import { detectAgentStatusFromTitle, normalizeTerminalTitle } from '../../shared/agent-detection'
-import type { RuntimeHeadlessTerminal } from './runtime-terminal-state-records'
-import { TrailingTerminalOutputCapture } from './terminal-output-trailing-capture'
-import { getOutputAfterSnapshotSeq } from './rpc/methods/terminal/terminal-stream-replay'
 import { shouldModelAnswerHiddenPtyQueries } from './terminal-model-query-authority'
 
 export class OrcaRuntimeWithMaybeHydrateHeadlessFromRenderer extends OrcaRuntimeWithSerializeMainTerminalBuffer {
@@ -16,111 +13,105 @@ export class OrcaRuntimeWithMaybeHydrateHeadlessFromRenderer extends OrcaRuntime
   // is populated synchronously so concurrent live writes from
   // trackHeadlessTerminalData chain after the seed via the same writeChain.
   // See docs/mobile-prefer-renderer-scrollback.md.
-  protected maybeHydrateHeadlessFromRenderer(
-    ptyId: string,
-    beforeChunkSequence = this.getPtyOutputSequence(ptyId)
-  ): void {
-    const hydration = this.headlessHydrationState.get(ptyId)
-    if (hydration === 'pending' || hydration === 'done') {
-      return
+  // Public: a phone subscribe calls it after the fit; the promise resolves true once seeded.
+  maybeHydrateHeadlessFromRenderer(ptyId: string): Promise<boolean> | null {
+    if (this.headlessHydrationState.has(ptyId)) {
+      return null
     }
     const providerSnapshotPreferred = this.providerSnapshotPreferredPtys.has(ptyId)
-    // Why the awaiting check: a viewer's frame-only emulator is not a seed —
-    // counting it as one would skip the renderer's history forever.
-    if (
-      this.headlessTerminals.has(ptyId) &&
-      !providerSnapshotPreferred &&
-      hydration !== 'awaiting-serializer'
-    ) {
+    if (this.headlessTerminals.has(ptyId) && !providerSnapshotPreferred) {
       // Daemon-snapshot seed already populated the emulator — skip hydration.
       this.headlessHydrationState.set(ptyId, 'done')
-      return
+      return null
     }
     const controller = this.ptyController
     if (!controller?.serializeBuffer || !controller.hasRendererSerializer) {
-      return
+      return null
     }
     if (!controller.hasRendererSerializer(ptyId)) {
       // Renderer hasn't registered yet (or never will). Live writes lazy-
       // create the state via trackHeadlessTerminalData on this same tick.
-      return
+      return null
     }
 
-    const state = this.getOrCreateHeadlessTerminal(ptyId)
-    const generation = this.getPtyLifecycleGeneration(ptyId)
-    const isCurrent = () =>
-      this.headlessTerminals.get(ptyId) === state &&
-      this.getPtyLifecycleGeneration(ptyId) === generation
-    const trailing = new TrailingTerminalOutputCapture(beforeChunkSequence)
-    const unsubscribe = this.subscribeToTerminalData(ptyId, (data, meta) =>
-      trailing.push(data, meta)
-    )
+    if (providerSnapshotPreferred) {
+      // Why: a stream byte can create a partial model before restored history
+      // arrives. A mounted renderer snapshot can safely replace that model.
+      this.disposeHeadlessTerminal(ptyId)
+    }
+
     this.headlessHydrationState.set(ptyId, 'pending')
-    // Keep one chain owner so live writes queued during capture use the committed emulator.
+    const dims = this.getTerminalSize(ptyId) ?? { cols: 80, rows: 24 }
+    // Why: hydration writes below never set forwardQueryReplies (main-side
+    // replay guard) — renderer-buffer snapshots can embed stale queries.
+    const state = this.createPtyHeadlessTerminalState(ptyId, dims)
+    state.outputSequence = this.getPtyOutputSequence(ptyId)
+    this.headlessTerminals.set(ptyId, state)
+
+    // Why: append the seed work to writeChain so live writes queued by
+    // trackHeadlessTerminalData (after this method returns synchronously)
+    // execute AFTER the seed-write resolves. If we awaited inline before
+    // setting headlessTerminals, the live byte would lazy-create a separate
+    // state and the seed-resolve would overwrite it, dropping live bytes.
+    let seeded = false
     state.writeChain = state.writeChain.then(async () => {
-      let candidate: RuntimeHeadlessTerminal | undefined
-      let committed = false
+      if (this.headlessTerminals.get(ptyId) !== state) {
+        return
+      }
       try {
-        if (!isCurrent()) {
-          return
-        }
+        // Why the scrollback is not suppressed mid-TUI: the seed IS the model's
+        // normal buffer, so zeroing it while an alt-screen agent was up left the
+        // model with no pre-TUI history to restore from (#6106).
         const rendered = await controller.serializeBuffer!(ptyId, {
           scrollbackRows: MOBILE_SUBSCRIBE_SCROLLBACK_ROWS
         })
-        if (!isCurrent() || !rendered || rendered.data.length === 0) {
-          return
-        }
         if (
-          typeof rendered.seq === 'number' &&
-          (rendered.seq < state.outputSequence ||
-            rendered.seq > this.getPtyOutputSequence(ptyId) ||
-            trailing.after(rendered.seq) === null)
+          this.headlessTerminals.get(ptyId) !== state ||
+          !rendered ||
+          rendered.data.length === 0
         ) {
           return
         }
-        candidate = this.createPtyHeadlessTerminalState(ptyId, rendered)
-        await candidate.emulator.write(rendered.data)
-        if (!isCurrent()) {
+        this.recordOsc7MetadataForPty(ptyId, rendered.data)
+        this.recordRecentPtyOutputForPathProvenance(ptyId, rendered.data)
+        // Resize to renderer's dims so the seed reflows correctly into the
+        // emulator's grid, then resize back to PTY dims (if known) so live
+        // writes use the correct cell layout.
+        if (rendered.cols !== dims.cols || rendered.rows !== dims.rows) {
+          state.emulator.resize(rendered.cols, rendered.rows)
+        }
+        await state.emulator.write(rendered.data)
+        if (this.headlessTerminals.get(ptyId) !== state) {
           return
         }
         const ptyDims = this.getTerminalSize(ptyId)
         if (ptyDims && (ptyDims.cols !== rendered.cols || ptyDims.rows !== rendered.rows)) {
-          candidate.emulator.resize(ptyDims.cols, ptyDims.rows)
+          state.emulator.resize(ptyDims.cols, ptyDims.rows)
         }
-        candidate.ownership.seedOwner(undefined, {
-          alternateScreen: candidate.emulator.isAlternateScreen
+        // Why: the renderer xterm no longer sees synthetic hook title frames
+        // (they feed main's tracker only), so its serializer lastTitle can be
+        // stale here. Prefer main's tracked title; the renderer's is only the
+        // seed when main has observed none (fresh relaunch, cold tracker).
+        state.ownership.seedOwner(undefined, {
+          alternateScreen: state.emulator.isAlternateScreen
         })
         const seedTitle = this.getTrackedRawTitleForPty(ptyId) ?? rendered.lastTitle
         if (seedTitle) {
-          candidate.emulator.setLastTitle(seedTitle)
-        }
-        state.emulator.disableQueryReplyForwarding()
-        state.emulator.dispose()
-        state.ownership.dispose()
-        state.emulator = candidate.emulator
-        state.ownership = candidate.ownership
-        state.rendererHydrationSequence = rendered.seq
-        state.outputSequence = rendered.seq ?? state.outputSequence
-        committed = true
-        this.recordOsc7MetadataForPty(ptyId, rendered.data)
-        this.recordRecentPtyOutputForPathProvenance(ptyId, rendered.data)
-        if (seedTitle) {
+          state.emulator.setLastTitle(seedTitle)
           this.applySeededAgentStatus(ptyId, seedTitle)
         }
         this.providerSnapshotPreferredPtys.delete(ptyId)
+        seeded = true
       } catch {
-        // Keep the incumbent model and retry on the next live chunk.
+        // Hydration is best-effort. Live writes continue via the same
+        // writeChain that this catch-arm leaves intact.
       } finally {
-        unsubscribe()
-        if (candidate && !committed) {
-          candidate.ownership.dispose()
-          candidate.emulator.dispose()
-        }
-        if (isCurrent()) {
-          this.headlessHydrationState.set(ptyId, committed ? 'done' : 'awaiting-serializer')
+        if (this.headlessTerminals.get(ptyId) === state) {
+          this.headlessHydrationState.set(ptyId, 'done')
         }
       }
     })
+    return state.writeChain.then(() => seeded)
   }
 
   // Why: seed-derived agent status reflects historical state. Orchestration
@@ -140,6 +131,8 @@ export class OrcaRuntimeWithMaybeHydrateHeadlessFromRenderer extends OrcaRuntime
     // once a live title was observed, so live state always wins.
     this.getOrCreatePtyTitleTrackerEntry(ptyId).tracker.seedInitialTitle(title)
     const status = detectAgentStatusFromTitle(title)
+    // Why evidence, not display: display readers project a stale-working clear over the record,
+    // so re-seeding the native working title cannot bring a cleared spinner back.
     // Why: live observations store normalized titles, so seeds must match —
     // otherwise the first live frame after hydration compares unequal and
     // touches session tabs once for no visible change.
@@ -177,9 +170,7 @@ export class OrcaRuntimeWithMaybeHydrateHeadlessFromRenderer extends OrcaRuntime
     ptyId: string,
     data: string,
     outputSequence: number,
-    forwardQueryReplies = false,
-    rawLength = data.length,
-    transformed = false
+    forwardQueryReplies = false
   ): Promise<void> {
     const state = this.getOrCreateHeadlessTerminal(ptyId)
     const completion = state.writeChain.then(async () => {
@@ -187,18 +178,8 @@ export class OrcaRuntimeWithMaybeHydrateHeadlessFromRenderer extends OrcaRuntime
       // chain link; async scheduling cannot retroactively change it.
       // Why inside the chain: the ownership mirror must observe live bytes in
       // the same total order as seeds (seedOwner also runs on this chain).
-      const uncovered = getOutputAfterSnapshotSeq(
-        { data, bytes: 0, meta: { seq: outputSequence, rawLength, transformed } },
-        state.rendererHydrationSequence
-      )
-      if (!uncovered) {
-        return
-      }
-      state.ownership.scan(uncovered.data)
-      for (const chunk of splitFreebuffScreenUpdates(
-        uncovered.data,
-        state.emulator.partialEscapeTailAnsi
-      )) {
+      state.ownership.scan(data)
+      for (const chunk of splitFreebuffScreenUpdates(data, state.emulator.partialEscapeTailAnsi)) {
         await state.emulator.write(chunk, { forwardQueryReplies })
         const pty = this.ptysById.get(ptyId)
         if (pty && !pty.connectionId && this.headlessTerminals.get(ptyId) === state) {

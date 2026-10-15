@@ -13,6 +13,8 @@ import {
 } from './pty-pre-handler-buffer'
 import { parkedWatchersByTabId } from './terminal-parked-watcher-registry'
 import { sweepUnclaimedCodexPaneRestarts } from './codex-detached-pane-restart'
+import { savedTabResume } from './pty-connection/saved-tab-resume'
+import { getKnownExecutionHostIdForWorktree } from '@/lib/worktree-runtime-owner'
 import {
   hasAddedPendingCodexPaneRestart,
   installCodexDetachedPaneRestartExecutor,
@@ -126,6 +128,8 @@ describe('codex detached pane restart executor', () => {
         initiallyHidden: true
       })
     )
+    // The leaf is in the root, so main already knows where it goes.
+    expect(vi.mocked(window.api.pty.spawn).mock.calls[0]?.[0]).not.toHaveProperty('placement')
     expect(window.api.pty.getSize).not.toHaveBeenCalled()
     expect(vi.mocked(window.api.pty.spawn).mock.calls[0]?.[0]?.env).toEqual(
       expect.objectContaining({
@@ -147,6 +151,51 @@ describe('codex detached pane restart executor', () => {
     // The whole point: the restart completed, so nothing may block input anymore.
     expect(blocksCodexPaneInput(state.codexRestartNoticeByPtyId[OLD_PTY])).toBe(false)
     expect(blocksCodexPaneInput(state.codexRestartNoticeByPtyId[NEW_PTY])).toBe(false)
+  })
+
+  it('resumes the replaced pane conversation with current launch settings', async () => {
+    seedQueuedRestart()
+    const paneKey = `tab-1:${LEAF_ID}`
+    useAppStore.getState().markCodexRestartNotices([
+      {
+        ptyId: OLD_PTY,
+        previousAccountLabel: ACCOUNT_A,
+        nextAccountLabel: ACCOUNT_A
+      }
+    ])
+    useAppStore.setState({
+      settings: {
+        ...useAppStore.getState().settings!,
+        agentCmdOverrides: { codex: 'current-codex' }
+      },
+      agentStatusByPaneKey: {
+        [paneKey]: {
+          paneKey,
+          worktreeId: 'wt1',
+          tabId: 'tab-1',
+          agentType: 'codex',
+          state: 'done',
+          prompt: 'Previous work',
+          updatedAt: 1,
+          stateStartedAt: 1,
+          stateHistory: [],
+          providerSession: { key: 'session_id', id: 'original-conversation' }
+        }
+      }
+    })
+    await sweepUnclaimedCodexPaneRestarts()
+    expect(window.api.pty.spawn).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        command: expect.stringContaining('original-conversation'),
+        resumeProviderSession: { key: 'session_id', id: 'original-conversation' },
+        launchConfig: expect.objectContaining({
+          agentCommand: expect.stringContaining('current-codex')
+        }),
+        replacesPtyId: OLD_PTY,
+        tabId: 'tab-1',
+        leafId: LEAF_ID
+      })
+    )
   })
 
   it('adopts the replacement when the replaced PTY exit clears the tab binding mid-spawn', async () => {
@@ -310,7 +359,7 @@ describe('codex detached pane restart executor', () => {
       })
     )
     expect(window.api.pty.spawn).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ replacesPtyId: OLD_PTY })
+      expect.objectContaining({ replacesPtyId: OLD_PTY, placement: { kind: 'root' } })
     )
   })
 
@@ -512,6 +561,58 @@ describe('codex detached pane restart executor', () => {
       })
     )
     expect(blocksCodexPaneInput(state.codexRestartNoticeByPtyId[OLD_PTY])).toBe(false)
+  })
+
+  it('does not queue an unguarded exact resume from an unbound legacy tab', async () => {
+    seedQueuedRestart({ leafId: null })
+    const source = useAppStore.getState()
+    source.worktreesByRepo.repo1![0]!.repoId = 'repo1'
+    source.repos = [
+      {
+        id: 'repo1',
+        path: '/Users/dev/code/orca',
+        displayName: 'Orca',
+        badgeColor: '',
+        addedAt: 1,
+        connectionId: null,
+        executionHostId: 'local'
+      }
+    ]
+    source.settings!.chatSidebar = {
+      sessions: {
+        '["local","codex","other-home-session"]': {
+          worktreeId: 'wt1',
+          snapshot: {
+            executionHostId: 'local',
+            agent: 'codex',
+            sessionId: 'other-home-session',
+            title: 'Saved chat',
+            cwd: '/Users/dev/code/orca',
+            filePath: '/home/user/.codex/sessions/2026/10/01/rollout-other-home.jsonl',
+            codexHome: '/home/user/.codex',
+            createdAt: '2026-10-01T00:00:00Z',
+            updatedAt: null,
+            modifiedAt: '2026-10-01T01:00:00Z'
+          }
+        }
+      }
+    }
+    source.tabsByWorktree.wt1![0]!.aiVaultTitle = {
+      agent: 'codex',
+      sessionId: 'other-home-session',
+      title: 'Saved chat'
+    }
+    expect(
+      savedTabResume(source, 'wt1', 'tab-1', getKnownExecutionHostIdForWorktree(source, 'wt1'))
+        ?.sessionId
+    ).toBe('other-home-session')
+    useAppStore.setState({ codexRestartNoticeByPtyId: {} })
+    await sweepUnclaimedCodexPaneRestarts()
+    const queued = useAppStore.getState().pendingStartupByTabId['tab-1']
+    expect(queued?.command).toMatch(/\bresume['"]?$/)
+    expect(queued?.resumeProviderSession).toBeUndefined()
+    expect(queued?.env?.CODEX_HOME).toBeUndefined()
+    expect(window.api.pty.spawn).not.toHaveBeenCalled()
   })
 
   it('publishes a rootless replacement startup before waiting for old PTY teardown', async () => {

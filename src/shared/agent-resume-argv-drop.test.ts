@@ -32,8 +32,26 @@ describe('dropAgentResumeArgvFromCommand', () => {
           agent: 'codex',
           providerSession: CODEX_SESSION
         })
-      ).toEqual({ status: 'dropped', command: 'codex' })
+      ).toEqual({ status: 'dropped', command: "codex '--cd' '.'" })
     }
+  })
+
+  it('leaves the Codex folder setting behind when dropping an AI Vault resume', () => {
+    const plan = buildAgentResumeStartupPlan({
+      agent: 'codex',
+      providerSession: CODEX_SESSION,
+      cmdOverrides: {},
+      platform: 'darwin',
+      resumeInLaunchCwd: true
+    })
+
+    expect(
+      dropAgentResumeArgvFromCommand({
+        command: plan?.launchCommand ?? '',
+        agent: 'codex',
+        providerSession: CODEX_SESSION
+      })
+    ).toEqual({ status: 'dropped', command: "codex '-c' 'tui.resume_cwd=current'" })
   })
 
   it('keeps the user CLI args that precede the resume argv', () => {
@@ -43,7 +61,7 @@ describe('dropAgentResumeArgvFromCommand', () => {
         agent: 'codex',
         providerSession: CODEX_SESSION
       })
-    ).toEqual({ status: 'dropped', command: "codex '--search'" })
+    ).toEqual({ status: 'dropped', command: "codex '--search' '--cd' '.'" })
   })
 
   it('drops an unquoted resume argv from a legacy persisted command', () => {

@@ -87,6 +87,7 @@ describe('launchAgentInNewTab paired web runtime', () => {
     ]
     const { launchAgentInNewTab } = await import('./launch-agent-in-new-tab')
     launchAgentInNewTab({
+      requestId: 'runtime-keep-existing',
       agent: 'claude',
       worktreeId: 'wt-1',
       executionHostId: 'runtime:chosen',
@@ -114,6 +115,7 @@ describe('launchAgentInNewTab paired web runtime', () => {
     }))
     const { launchAgentInNewTab } = await import('./launch-agent-in-new-tab')
     launchAgentInNewTab({
+      requestId: 'runtime-prune-legacy',
       agent: 'claude',
       worktreeId: 'wt-1',
       executionHostId: 'runtime:chosen',
@@ -128,6 +130,7 @@ describe('launchAgentInNewTab paired web runtime', () => {
     store.tabsByWorktree['wt-1'].push({ id: 'local-agent-tab', launchAgent: 'claude' })
     const { launchAgentInNewTab } = await import('./launch-agent-in-new-tab')
     launchAgentInNewTab({
+      requestId: 'runtime-background-launch',
       agent: 'claude',
       worktreeId: 'wt-1',
       executionHostId: 'runtime:chosen',
@@ -163,6 +166,7 @@ describe('launchAgentInNewTab paired web runtime', () => {
     const { launchAgentInNewTab } = await import('./launch-agent-in-new-tab')
 
     const result = launchAgentInNewTab({
+      requestId: 'request-1',
       agent: 'claude',
       worktreeId: 'wt-1',
       groupId: 'group-1'
@@ -196,6 +200,7 @@ describe('launchAgentInNewTab paired web runtime', () => {
     const { launchAgentInNewTab } = await import('./launch-agent-in-new-tab')
 
     const result = launchAgentInNewTab({
+      requestId: 'request-2',
       agent: 'codex',
       worktreeId: 'wt-1',
       prompt: 'fix the spinner',

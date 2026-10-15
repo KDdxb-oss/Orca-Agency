@@ -24,6 +24,15 @@ import { hiddenChatFolderLabels } from './chat-creation-folders'
 
 export function ChatSidebarOptions() {
   const groupBy = useAppStore((state) => state.settings?.chatSidebar?.groupBy ?? 'status')
+  const showOnlyInProgress = useAppStore(
+    (state) => state.settings?.chatSidebar?.showOnlyInProgress ?? false
+  )
+  const showOnlyOpenChats = useAppStore(
+    (state) => state.settings?.chatSidebar?.showOnlyOpenChats ?? false
+  )
+  const collapseDoneFolders = useAppStore(
+    (state) => state.settings?.chatSidebar?.collapseDoneFolders ?? false
+  )
   const savedHiddenFolders = useAppStore((state) => state.settings?.chatSidebar?.hiddenFolders)
   const state = useAppStore(
     useShallow((s) => ({
@@ -40,15 +49,20 @@ export function ChatSidebarOptions() {
     [state]
   )
   const hiddenCount = folders.filter((folder) => hiddenFolders?.includes(folder)).length
-  const label = hiddenCount
-    ? `Chat grouping and folder filters (${hiddenCount} hidden)`
-    : 'Chat grouping and folder filters'
+  const hasActiveFilters = showOnlyInProgress || showOnlyOpenChats || collapseDoneFolders
+  const label = `Chat grouping and folder filters${hasActiveFilters ? ', filters active' : ''}${hiddenCount ? ` (${hiddenCount} hidden)` : ''}`
   return (
     <DropdownMenu modal={false}>
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-xs" aria-label={label} className="relative">
+            <Button
+              variant={hasActiveFilters ? 'outline' : 'ghost'}
+              size="icon-xs"
+              aria-label={label}
+              data-filters-active={hasActiveFilters}
+              className="relative"
+            >
               <SlidersHorizontal className="size-3.5" />
               {hiddenCount > 0 ? (
                 <span
@@ -79,6 +93,37 @@ export function ChatSidebarOptions() {
           <DropdownMenuRadioItem value="status">Status</DropdownMenuRadioItem>
           <DropdownMenuRadioItem value="folder">Folder</DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuCheckboxItem
+          checked={showOnlyInProgress}
+          onSelect={(event) => event.preventDefault()}
+          onCheckedChange={(checked) =>
+            void updateChatSidebar({ showOnlyInProgress: checked === true })
+          }
+        >
+          Hide Done chats
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={showOnlyOpenChats}
+          onSelect={(event) => event.preventDefault()}
+          onCheckedChange={(checked) =>
+            void updateChatSidebar({ showOnlyOpenChats: checked === true })
+          }
+        >
+          Show only open chats
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={collapseDoneFolders}
+          onSelect={(event) => event.preventDefault()}
+          onCheckedChange={(checked) =>
+            void updateChatSidebar({
+              collapseDoneFolders: checked === true,
+              expandedDoneFolders: []
+            })
+          }
+        >
+          Collapse Done folders
+        </DropdownMenuCheckboxItem>
         <DropdownMenuSeparator />
         <DropdownMenuSub>
           <DropdownMenuSubTrigger>Folders</DropdownMenuSubTrigger>

@@ -13,6 +13,70 @@ afterEach(async () => {
 })
 
 describe('scanAiVaultSessions Claude title selection', () => {
+  it('marks sdk-cli transcripts as headless while keeping them in session history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-ai-vault-headless-'))
+    tempRoots.push(root)
+    const roots = isolatedScanRoots(root)
+    const projectDir = join(roots.claudeProjectsDir, 'project')
+    await writeJsonlFile(join(projectDir, 'headless.jsonl'), [
+      {
+        type: 'user',
+        sessionId: 'headless',
+        entrypoint: 'sdk-cli',
+        timestamp: '2026-10-01T08:00:00.000Z',
+        message: { role: 'user', content: 'One-shot audit' }
+      }
+    ])
+    await writeJsonlFile(join(projectDir, 'interactive.jsonl'), [
+      {
+        type: 'user',
+        sessionId: 'interactive',
+        entrypoint: 'cli',
+        timestamp: '2026-10-01T08:00:00.000Z',
+        message: { role: 'user', content: 'Interactive work' }
+      }
+    ])
+    await writeJsonlFile(join(projectDir, 'resumed-interactively.jsonl'), [
+      {
+        type: 'user',
+        sessionId: 'resumed-interactively',
+        entrypoint: 'sdk-cli',
+        message: { role: 'user', content: 'One-shot start' }
+      },
+      {
+        type: 'user',
+        sessionId: 'resumed-interactively',
+        entrypoint: 'cli',
+        message: { role: 'user', content: 'Continue in a terminal' }
+      }
+    ])
+    await writeJsonlFile(join(projectDir, 'used-headlessly.jsonl'), [
+      {
+        type: 'user',
+        sessionId: 'used-headlessly',
+        entrypoint: 'cli',
+        message: { role: 'user', content: 'Terminal start' }
+      },
+      {
+        type: 'user',
+        sessionId: 'used-headlessly',
+        entrypoint: 'sdk-cli',
+        message: { role: 'user', content: 'One-shot continuation' }
+      }
+    ])
+    const sessions = (await scanAiVaultSessions({ ...roots, platform: 'win32' })).sessions
+    expect(sessions.find((session) => session.sessionId === 'headless')?.isHeadless).toBe(true)
+    expect(
+      sessions.find((session) => session.sessionId === 'interactive')?.isHeadless
+    ).toBeUndefined()
+    expect(
+      sessions.find((session) => session.sessionId === 'resumed-interactively')?.isHeadless
+    ).toBeUndefined()
+    expect(
+      sessions.find((session) => session.sessionId === 'used-headlessly')?.isHeadless
+    ).toBeUndefined()
+  })
+
   it('keeps the latest real user turn after preview eviction and ignores meta or invalid times', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-ai-vault-human-turn-'))
     tempRoots.push(root)

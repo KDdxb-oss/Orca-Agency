@@ -1,40 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { _electron as electron, test, expect, type Page } from '@stablyai/playwright-test'
+import { _electron as electron, test, expect } from '@stablyai/playwright-test'
 import { getE2ECompletedOnboardingProfile } from './helpers/e2e-completed-onboarding-profile'
 import { createElectronHomeIsolation } from './helpers/electron-home-isolation'
 import { cleanupE2EDaemons, closeElectronAppForE2E } from './helpers/electron-process-shutdown'
 import { retryTransientMainEvaluate } from './helpers/electron-main-evaluate-retry'
 import { assertPackagedExecutableIdentity } from './helpers/packaged-executable-identity'
+import { waitForPackagedNativeShellInput } from './helpers/packaged-native-shell-readiness'
 
 function readShellOutput(file: string): string {
   const bytes = readFileSync(file)
   return bytes.toString(bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf16le' : 'utf8')
-}
-
-async function waitForNativeShellInput(page: Page, worktreeId: string): Promise<void> {
-  if (process.platform !== 'win32') {
-    return
-  }
-  // Wait for the live PTY's focus mode; this alone does not prove PSReadLine readiness.
-  await expect
-    .poll(
-      () =>
-        page.evaluate(async (id) => {
-          const session = (await window.api.pty.listSessions()).find(
-            (session) => session.worktreeId === id
-          )
-          if (!session) {
-            return false
-          }
-          const snapshot = await window.api.pty.getMainBufferSnapshot(session.id, {
-            scrollbackRows: 10
-          })
-          return snapshot?.data.includes('\x1b[?1004h') ?? false
-        }, worktreeId),
-      { timeout: 30_000 }
-    )
-    .toBe(true)
 }
 
 // Run against the production executable, without the test-only renderer store.
@@ -74,12 +50,14 @@ test('packaged sidebar and cross-workspace terminals', async (// oxlint-disable-
     expect(await retryTransientMainEvaluate(() => app.evaluate(({ app }) => app.isPackaged))).toBe(
       true
     )
-    const page = await app.firstWindow()
-    await app.evaluate(({ BrowserWindow }) => {
-      for (const window of BrowserWindow.getAllWindows()) {
-        window.webContents.setBackgroundThrottling(false)
-      }
-    })
+    const page = await app.firstWindow({ timeout: 60_000 })
+    await retryTransientMainEvaluate(() =>
+      app.evaluate(({ BrowserWindow }) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.webContents.setBackgroundThrottling(false)
+        }
+      })
+    )
     await page.waitForFunction(() => Boolean(window.api))
     expect(await page.evaluate(() => Boolean(window.__store))).toBe(false)
     const errors: string[] = []
@@ -126,8 +104,10 @@ test('packaged sidebar and cross-workspace terminals', async (// oxlint-disable-
     await expect(row(ids[0]).locator('[data-worktree-status-context]')).toContainText(
       'Smoke projects'
     )
-    await expect(row(ids[0]).locator('[data-worktree-status-context]')).toContainText('d')
-    await row(ids[2]).getByRole('button', { name: 'Mark workspace Done' }).click()
+    await expect(row(ids[0]).locator('[data-worktree-status-context]')).toContainText('1d')
+    await row(ids[2]).locator('[data-worktree-card-surface]').click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Move to Status' }).hover()
+    await page.getByRole('menuitemradio', { name: 'Done' }).click()
     await expect.poll(() => lane(ids[2])).toBe('completed')
     await row(ids[0]).locator('[data-worktree-card-surface]').click()
     await expect(page.locator('.xterm:visible')).toHaveCount(1, { timeout: 30_000 })
@@ -143,7 +123,7 @@ test('packaged sidebar and cross-workspace terminals', async (// oxlint-disable-
         timeout: 30_000
       })
       .toBe(1)
-    await waitForNativeShellInput(page, `folder:${ids[0]}`)
+    await waitForPackagedNativeShellInput(page, `folder:${ids[0]}`)
     await page.keyboard.type('echo FIRST_WORKSPACE_SMOKE > smoke-output.txt')
     await page.keyboard.press('Enter')
     await expect
@@ -170,7 +150,7 @@ test('packaged sidebar and cross-workspace terminals', async (// oxlint-disable-
         timeout: 30_000
       })
       .toBe(2)
-    await waitForNativeShellInput(page, `folder:${ids[1]}`)
+    await waitForPackagedNativeShellInput(page, `folder:${ids[1]}`)
     await page.keyboard.type('echo SECOND_WORKSPACE_SMOKE > smoke-output.txt')
     await page.keyboard.press('Enter')
     await expect
@@ -233,7 +213,7 @@ test('packaged sidebar and cross-workspace terminals', async (// oxlint-disable-
     )
     await expect.poll(() => lane(ids[1])).toBe('completed')
 
-    // Keep activity above the new-workspace grace floor so it determines ordering.
+    // Smart prioritizes working attention; Recent uses the recorded activity times.
     await page.evaluate(async (ids) => {
       for (const [index, id] of ids.slice(0, 2).entries()) {
         await window.api.folderWorkspaces.update({
@@ -260,9 +240,25 @@ test('packaged sidebar and cross-workspace terminals', async (// oxlint-disable-
           (id) => id === `folder:${ids[0]}` || id === `folder:${ids[1]}`
         )
       )
-      .toEqual([`folder:${ids[0]}`, `folder:${ids[1]}`])
-    await page.evaluate(() => window.api.ui.set({ sortBy: 'recent' }))
+      .toEqual([`folder:${ids[1]}`, `folder:${ids[0]}`])
     await page.reload()
+    await page.getByRole('button', { name: 'Workspace options' }).click()
+    await page.getByRole('menuitem', { name: /Sort by/ }).hover()
+    await page.getByRole('menuitemradio', { name: 'Name', exact: true }).click()
+    await page.keyboard.press('Escape')
+    // Reattached PTYs can bump activity during reload; set the comparison after they reconnect.
+    await page.evaluate(async (ids) => {
+      for (const [index, id] of ids.slice(0, 2).entries()) {
+        await window.api.folderWorkspaces.update({
+          folderWorkspaceId: id,
+          updates: { lastActivityAt: Date.now() + (2 - index) * 600_000 }
+        })
+      }
+    }, ids)
+    await page.getByRole('button', { name: 'Workspace options' }).click()
+    await page.getByRole('menuitem', { name: /Sort by/ }).hover()
+    await page.getByRole('menuitemradio', { name: 'Recent', exact: true }).click()
+    await page.keyboard.press('Escape')
     await expect
       .poll(async () =>
         (await displayedOrder()).filter(
@@ -279,20 +275,24 @@ test('packaged sidebar and cross-workspace terminals', async (// oxlint-disable-
     await page.keyboard.type('echo GRID_CARD_ZERO > grid-output.txt')
     await page.keyboard.press('Enter')
     await expect
-      .poll(
-        () =>
-          folderPaths.filter((folder) => existsSync(path.join(folder, 'grid-output.txt'))).length
+      .poll(() =>
+        folderPaths.some((folder) => {
+          const file = path.join(folder, 'grid-output.txt')
+          return existsSync(file) && readShellOutput(file).includes('GRID_CARD_ZERO')
+        })
       )
-      .toBe(1)
+      .toBe(true)
     await cards.nth(1).locator('.xterm').click()
     await page.keyboard.type('echo GRID_CARD_ONE > grid-output.txt')
     await page.keyboard.press('Enter')
     await expect
-      .poll(
-        () =>
-          folderPaths.filter((folder) => existsSync(path.join(folder, 'grid-output.txt'))).length
+      .poll(() =>
+        folderPaths.some((folder) => {
+          const file = path.join(folder, 'grid-output.txt')
+          return existsSync(file) && readShellOutput(file).includes('GRID_CARD_ONE')
+        })
       )
-      .toBe(2)
+      .toBe(true)
     const outputs = folderPaths
       .slice(0, 2)
       .map((folder) => readShellOutput(path.join(folder, 'grid-output.txt')))
@@ -305,30 +305,36 @@ test('packaged sidebar and cross-workspace terminals', async (// oxlint-disable-
       )
     ).toBe(true)
   } finally {
-    const page = app.windows()[0]
-    if (page) {
-      await page
-        .screenshot({ path: testInfo.outputPath('packaged-sidebar-final.png') })
-        .catch(() => {})
-      const snapshots = await page
-        .evaluate(async () => {
-          const sessions = await window.api.pty.listSessions()
-          return Promise.all(
-            sessions.map(async (session) => ({
-              session,
-              snapshot: await window.api.pty.getMainBufferSnapshot(session.id, {
-                scrollbackRows: 100
-              })
-            }))
-          )
-        })
-        .catch(() => null)
-      writeFileSync(
-        testInfo.outputPath('terminal-snapshots.json'),
-        JSON.stringify(snapshots, null, 2)
-      )
+    try {
+      const page = app.windows()[0]
+      if (page) {
+        await page
+          .screenshot({ path: testInfo.outputPath('packaged-sidebar-final.png') })
+          .catch(() => {})
+        const snapshots = await page
+          .evaluate(async () => {
+            const sessions = await window.api.pty.listSessions()
+            return Promise.all(
+              sessions.map(async (session) => ({
+                session,
+                snapshot: await window.api.pty.getMainBufferSnapshot(session.id, {
+                  scrollbackRows: 100
+                })
+              }))
+            )
+          })
+          .catch(() => null)
+        writeFileSync(
+          testInfo.outputPath('terminal-snapshots.json'),
+          JSON.stringify(snapshots, null, 2)
+        )
+      }
+    } finally {
+      try {
+        await closeElectronAppForE2E(app)
+      } finally {
+        await cleanupE2EDaemons(userDataDir)
+      }
     }
-    await closeElectronAppForE2E(app)
-    await cleanupE2EDaemons(userDataDir)
   }
 })

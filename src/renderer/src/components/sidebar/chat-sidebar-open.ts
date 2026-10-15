@@ -67,18 +67,21 @@ export async function openSavedSidebarChat(row: ChatSidebarRow, resume: ResumeCh
       resume(session, undefined, { onSettled: () => opening.delete(row.id) })
       return
     }
-    const workspace = await createSeparateChatWorkspace(row)
+    const workspace = await createSeparateChatWorkspace(row, { useSourceWhenUngrouped: true })
+    const createdWorkspace = workspace.id !== row.worktree.id
     const currentLive = findLive()
     if (currentLive) {
       activateResidentSidebarChat(currentLive)
-      await discardEmptyChatWorkspace(workspace)
+      if (createdWorkspace) {
+        await discardEmptyChatWorkspace(workspace)
+      }
       opening.delete(row.id)
       return
     }
     resume(session, workspace.id, {
       onSettled: (outcome) => {
         opening.delete(row.id)
-        if (outcome === 'not-created') {
+        if (createdWorkspace && outcome === 'not-created') {
           void discardEmptyChatWorkspace(workspace).catch(() => {})
         }
       }

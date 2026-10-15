@@ -42,12 +42,24 @@ async function scanRecentKeyMarkerSeqs(
       const re = new RegExp(`${markerPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)`, 'g')
       const buffer = pane.terminal.buffer.active
       const start = Math.max(0, buffer.length - trailingRows)
-      for (let row = start; row < buffer.length; row += 1) {
-        const line = buffer.getLine(row)?.translateToString(true) ?? ''
+      let logicalLine = ''
+      const collectSeqs = (): void => {
         let match: RegExpExecArray | null
-        while ((match = re.exec(line)) !== null) {
+        re.lastIndex = 0
+        while ((match = re.exec(logicalLine)) !== null) {
           seqs.push(Number(match[1]))
         }
+      }
+      for (let row = start; row < buffer.length; row += 1) {
+        const line = buffer.getLine(row)
+        if (!line?.isWrapped && logicalLine) {
+          collectSeqs()
+          logicalLine = ''
+        }
+        logicalLine += line?.translateToString(true) ?? ''
+      }
+      if (logicalLine) {
+        collectSeqs()
       }
       return { seqs, atMs: Date.now() }
     },

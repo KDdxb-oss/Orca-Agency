@@ -210,6 +210,7 @@ export class OrcaRuntimeWithOnPtyExit extends OrcaRuntimeWithOnClientDisconnecte
         pty.disconnectedAt = Date.now()
         pty.lastExitCode = exitCode
         pty.lastExitCause = exitCause
+        pty.tailPendingAnsi = ''
         // Why: the exited process's live frames say nothing about a replacement.
         // A same-id respawn makes the leaf writable again before any new title,
         // so leaving this true would let push delivery type into the new process
@@ -243,6 +244,7 @@ export class OrcaRuntimeWithOnPtyExit extends OrcaRuntimeWithOnClientDisconnecte
       leaf.writable = false
       leaf.lastExitCode = exitCode
       leaf.lastExitCause = exitCause
+      leaf.tailPendingAnsi = ''
       leaf.lastAgentStatusObservedLive = false
       this.resolveExitWaiters(leaf)
       const leafHandle = this.handleByLeafKey.get(this.getLeafKey(leaf.tabId, leaf.leafId))

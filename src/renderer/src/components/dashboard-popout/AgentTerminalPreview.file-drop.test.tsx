@@ -1,11 +1,9 @@
 // @vitest-environment happy-dom
 
-import { terminalHarness } from './__mocks__/preview-terminal-input'
 import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import type { NativeFileDropPayload } from '../../../../shared/native-file-drop'
+import { terminalHarness } from './__mocks__/preview-terminal-input'
 import { AgentTerminalPreview } from './AgentTerminalPreview'
-import type { NativeTerminalFileDropArgs } from '../terminal-pane/terminal-native-file-drop'
 import { captureTerminalDropTarget } from '../terminal-pane/terminal-drop-target'
 import { writeTerminalDropPathsToCapturedTarget } from '../terminal-pane/terminal-drop-path-writer'
 import { WORKSPACE_FILE_PATH_MIME, writeWorkspaceFileDragSource } from '@/lib/workspace-file-drag'
@@ -13,19 +11,25 @@ import type { TerminalPreviewDataPayload } from '../../../../shared/terminal-pre
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 
 const dropHarness = vi.hoisted(() => ({
-  native: vi.fn<(args: NativeTerminalFileDropArgs) => Promise<void>>(),
-  internal: vi.fn()
+  capture: vi.fn(),
+  deliver: vi.fn(async (_paths: string[]) => undefined),
+  internal: vi.fn(),
+  internalNative: vi.fn(),
+  prepare: vi.fn(async ({ paths }: { paths: string[] }) => ({ paths, failures: [] }))
 }))
 const dropHost = vi.hoisted((): { value: ExecutionHostId } => ({ value: 'local' }))
 vi.mock('@/lib/worktree-runtime-owner', () => ({
   getExecutionHostIdForWorktree: () => dropHost.value
 }))
+vi.mock('../terminal-pane/terminal-native-file-drop-destination', () => ({
+  captureNativeTerminalFileDrop: dropHarness.capture
+}))
 vi.mock('../terminal-pane/terminal-drop-handler', () => ({
-  handleTerminalFileDrop: dropHarness.native,
+  handleTerminalFileDrop: dropHarness.internalNative,
   handleInternalTerminalFileDrop: dropHarness.internal
 }))
+
 const dataListeners = new Set<(data: TerminalPreviewDataPayload) => void>()
-const listeners = new Set<(data: NativeFileDropPayload) => void>()
 const input = vi.fn(async (_ptyId: string, _data: string) => true)
 const workspace = {
   worktreeId: 'folder-a',
@@ -35,16 +39,32 @@ const workspace = {
   executionHostId: 'local' as const
 }
 
+function osDrop(root: HTMLElement): void {
+  const event = new Event('drop', { bubbles: true, cancelable: true, composed: true })
+  Object.defineProperty(event, 'dataTransfer', {
+    value: { types: ['Files'], files: [new File(['x'], 'a b.txt')] }
+  })
+  Object.defineProperty(event, 'isTrusted', { value: true })
+  root.dispatchEvent(event)
+}
+
+function osDropRoot(container: HTMLElement): HTMLElement {
+  const root = container.querySelector<HTMLElement>('[data-os-file-drop-owner]')
+  if (!root) {
+    throw new Error('Missing OS file drop owner')
+  }
+  return root
+}
+
 beforeEach(() => {
   terminalHarness.instances.length = 0
   dropHost.value = 'local'
+  dropHarness.capture.mockImplementation(() => dropHarness.deliver)
   Object.assign(window, {
     api: {
-      ui: {
-        onFileDrop: (listener: (data: NativeFileDropPayload) => void) => {
-          listeners.add(listener)
-          return () => listeners.delete(listener)
-        }
+      fs: {
+        getPathForFile: (file: File) => `/tmp/${file.name}`,
+        prepareDroppedPaths: dropHarness.prepare
       },
       terminalPreview: {
         connect: vi.fn(async () => ({
@@ -64,54 +84,53 @@ beforeEach(() => {
   })
 })
 
-function dispatchNativeDrop(container: HTMLElement): void {
-  const previewSurfaceId = container.querySelector<HTMLElement>(
-    '[data-terminal-preview-surface-id]'
-  )?.dataset.terminalPreviewSurfaceId
-  if (!previewSurfaceId) {
-    throw new Error('No preview drop target')
-  }
-  for (const listener of listeners) {
-    listener({ target: 'terminal', paths: ['/tmp/a b.txt'], previewSurfaceId })
-  }
-}
+afterEach(() => {
+  cleanup()
+  dataListeners.clear()
+  vi.clearAllMocks()
+})
 
-it.each(['unmount', 'replace', 'host-change'] as const)(
-  'cancels a pending upload after %s',
+it.each(['unmount', 'replace', 'host-change', 'reconnect'] as const)(
+  'rejects a prepared OS drop after %s',
   async (change) => {
+    let releasePreparation: ((result: { paths: string[]; failures: [] }) => void) | undefined
+    dropHarness.prepare.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releasePreparation = resolve
+        })
+    )
     const view = render(<AgentTerminalPreview ptyId="pty-a" workspace={workspace} />)
     await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
-    dispatchNativeDrop(view.container)
-    const args = dropHarness.native.mock.calls[0][0]
-    const pane = args.manager.getActivePane()
-    const transport = pane && args.paneTransports.get(pane.id)
-    if (!pane || !transport) {
-      throw new Error('Missing captured destination')
-    }
-    const dropTarget = captureTerminalDropTarget(pane, transport)
+    await act(async () => osDrop(osDropRoot(view.container)))
+    expect(dropHarness.capture).toHaveBeenCalledTimes(1)
     if (change === 'unmount') {
       view.unmount()
     } else if (change === 'replace') {
       view.rerender(<AgentTerminalPreview ptyId="pty-b" workspace={workspace} />)
-    } else {
+    } else if (change === 'host-change') {
       dropHost.value = 'ssh:other'
+    } else {
+      await act(async () => {
+        for (const listener of dataListeners) {
+          listener({ type: 'resync', ptyId: 'pty-a' })
+        }
+      })
     }
-    const result = await writeTerminalDropPathsToCapturedTarget({
-      ...args,
-      dropTarget,
-      paths: ['/remote/uploaded.txt'],
-      targetShell: 'posix'
-    })
-    expect(result.failureReason).toBe('target-stale')
-    expect(input).not.toHaveBeenCalled()
+    await act(async () => releasePreparation?.({ paths: ['/tmp/a b.txt'], failures: [] }))
+    expect(dropHarness.deliver).not.toHaveBeenCalled()
   }
 )
 
-it('uses the existing path writer with the captured preview PTY', async () => {
-  const view = render(<AgentTerminalPreview ptyId="pty-a" workspace={workspace} />)
-  await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
-  dispatchNativeDrop(view.container)
-  const args = dropHarness.native.mock.calls[0][0]
+it('captures one preview and its original PTY when two show the same tab', async () => {
+  const first = render(<AgentTerminalPreview ptyId="pty-a" workspace={workspace} />)
+  render(<AgentTerminalPreview ptyId="pty-a" workspace={workspace} />)
+  await waitFor(() => expect(terminalHarness.instances).toHaveLength(2))
+  await act(async () => osDrop(osDropRoot(first.container)))
+  await waitFor(() => expect(dropHarness.deliver).toHaveBeenCalledWith(['/tmp/a b.txt']))
+  expect(dropHarness.capture).toHaveBeenCalledTimes(1)
+  const args = dropHarness.capture.mock.calls[0][0]
+  expect(args).toMatchObject({ worktreeId: 'folder-a', tabId: 'tab-a', cwd: '/workspace' })
   const pane = args.manager.getActivePane()
   const transport = pane && args.paneTransports.get(pane.id)
   if (!pane || !transport) {
@@ -146,10 +165,7 @@ it.each([
       />
     )
     await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
-    const target = view.container.querySelector('[data-terminal-preview-surface-id]')
-    if (!target) {
-      throw new Error('Missing drop surface')
-    }
+    const target = osDropRoot(view.container)
     const dataTransfer = new DataTransfer()
     dataTransfer.setData(WORKSPACE_FILE_PATH_MIME, '/source/a b.txt')
     writeWorkspaceFileDragSource(dataTransfer, {
@@ -161,61 +177,7 @@ it.each([
     await act(async () => {
       target.dispatchEvent(event)
     })
-    expect(dropHarness.native).toHaveBeenCalledTimes(route === 'native' ? 1 : 0)
+    expect(dropHarness.internalNative).toHaveBeenCalledTimes(route === 'native' ? 1 : 0)
     expect(dropHarness.internal).toHaveBeenCalledTimes(route === 'internal' ? 1 : 0)
   }
 )
-afterEach(() => {
-  cleanup()
-  listeners.clear()
-  dataListeners.clear()
-  vi.clearAllMocks()
-})
-
-it('addresses native drops to one preview even when two surfaces show the same tab', async () => {
-  const first = render(<AgentTerminalPreview ptyId="pty-a" workspace={workspace} />)
-  render(<AgentTerminalPreview ptyId="pty-a" workspace={workspace} />)
-  await waitFor(() => expect(terminalHarness.instances).toHaveLength(2))
-  const surface = first.container.querySelector<HTMLElement>('[data-terminal-preview-surface-id]')
-  expect(surface).not.toBeNull()
-  expect(surface).toBe(first.container.querySelector('.origin-bottom-left')?.parentElement)
-  await act(async () => {
-    for (const listener of listeners) {
-      listener({
-        target: 'terminal',
-        paths: ['/tmp/a b.txt'],
-        tabId: 'tab-a',
-        previewSurfaceId: surface?.dataset.terminalPreviewSurfaceId
-      })
-    }
-  })
-  expect(dropHarness.native).toHaveBeenCalledTimes(1)
-  expect(dropHarness.native.mock.calls[0][0]).toMatchObject({
-    worktreeId: 'folder-a',
-    tabId: 'tab-a',
-    cwd: '/workspace',
-    data: { paths: ['/tmp/a b.txt'] }
-  })
-})
-
-it('rejects delayed native events from before a reconnection', async () => {
-  const view = render(<AgentTerminalPreview ptyId="pty-a" workspace={workspace} />)
-  await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
-  const surface = view.container.querySelector<HTMLElement>('[data-terminal-preview-surface-id]')
-  const previousScope = surface?.dataset.terminalPreviewSurfaceId
-  if (!previousScope) {
-    throw new Error('Missing drop surface')
-  }
-  await act(async () => {
-    for (const listener of dataListeners) {
-      listener({ type: 'resync', ptyId: 'pty-a' })
-    }
-  })
-  expect(surface?.dataset.terminalPreviewSurfaceId).not.toBe(previousScope)
-  for (const listener of listeners) {
-    listener({ target: 'terminal', paths: ['/tmp/stale.txt'], previewSurfaceId: previousScope })
-  }
-  expect(dropHarness.native).not.toHaveBeenCalled()
-  dispatchNativeDrop(view.container)
-  expect(dropHarness.native).toHaveBeenCalledTimes(1)
-})

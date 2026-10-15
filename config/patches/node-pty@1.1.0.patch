@@ -1216,20 +1216,18 @@ index 7b286d3d64..5239ba4e40 100644
  };
  
 diff --git a/lib/windowsPtyAgent.js b/lib/windowsPtyAgent.js
-index a358ffb177357e177661033c1b092f9c9d0e5f5a..26c2a4c58799ce649f5113131e4c52f7ed2d87ad 100644
+index a358ffb177357e177661033c1b092f9c9d0e5f5a..994ef290a9e2e28ad9bacf36c18d9b3ef6fbdc41 100644
 --- a/lib/windowsPtyAgent.js
 +++ b/lib/windowsPtyAgent.js
-@@ -136,6 +136,9 @@ var WindowsPtyAgent = /** @class */ (function () {
-         if (this._useConpty) {
-             if (!this._useConptyDll) {
-                 this._inSocket.readable = false;
-+                // The non-DLL path previously only flipped `readable`, leaving the
-+                // conin PipeWrap alive until the host exited (#947).
+@@ -149,14 +149,18 @@ var WindowsPtyAgent = /** @class */ (function () {
+                 });
+                 this._ptyNative.kill(this._pty, this._useConptyDll);
+                 this._conoutSocketWorker.dispose();
++                // Release conin only after the console-list fork and native kill.
++                // Closing it earlier aborts teardown and leaks both pipes (#947).
 +                this._inSocket.destroy();
-                 this._outSocket.readable = false;
-                 this._getConsoleProcessList().then(function (consoleProcessList) {
-                     consoleProcessList.forEach(function (pid) {
-@@ -154,9 +157,10 @@ var WindowsPtyAgent = /** @class */ (function () {
+             }
+             else {
                  // Close the input write handle to signal the end of session.
                  this._inSocket.destroy();
                  this._ptyNative.kill(this._pty, this._useConptyDll);
@@ -1243,6 +1241,50 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..26c2a4c58799ce649f5113131e4c52f7
              }
          }
          else {
+@@ -185,15 +189,38 @@ var WindowsPtyAgent = /** @class */ (function () {
+     WindowsPtyAgent.prototype._getConsoleProcessList = function () {
+         var _this = this;
+         return new Promise(function (resolve) {
+-            var agent = child_process_1.fork(path.join(__dirname, 'conpty_console_list_agent'), [_this._innerPid.toString()]);
+-            agent.on('message', function (message) {
++            var fallback = [_this._innerPid];
++            var agent;
++            try {
++                agent = child_process_1.fork(path.join(__dirname, 'conpty_console_list_agent'), [_this._innerPid.toString()]);
++            }
++            catch (_a) {
++                resolve(fallback);
++                return;
++            }
++            var settled = false;
++            var finish = function (list) {
++                if (settled) {
++                    return;
++                }
++                settled = true;
+                 clearTimeout(timeout);
+-                resolve(message.consoleProcessList);
++                resolve(list);
++            };
++            agent.on('message', function (message) {
++                finish(message && Array.isArray(message.consoleProcessList) ? message.consoleProcessList : fallback);
+             });
++            // A failed helper must not crash the daemon or abort ConPTY teardown.
++            agent.on('error', function () { finish(fallback); });
+             var timeout = setTimeout(function () {
+                 // Something went wrong, just send back the shell PID
+-                agent.kill();
+-                resolve([_this._innerPid]);
++                try {
++                    agent.kill();
++                }
++                catch (_a) {
++                    // The helper may already have exited.
++                }
++                finish(fallback);
+             }, 5000);
+         });
+     };
 diff --git a/lib/windowsTerminal.js b/lib/windowsTerminal.js
 index 3c38f89..e20b3e6 100644
 --- a/lib/windowsTerminal.js
@@ -1328,20 +1370,17 @@ index 3c38f89..e20b3e6 100644
 \ No newline at end of file
 +//# sourceMappingURL=windowsTerminal.js.map
 diff --git a/src/windowsPtyAgent.ts b/src/windowsPtyAgent.ts
-index d7054449516f0c9a62af351c2caa17331206d530..0c28a32e2e1db2b3f208ddde8443cd4e67bb1ad6 100644
+index d7054449516f0c9a62af351c2caa17331206d530..8fcebc570ca489cf46bbec91f010d3a979922d86 100644
 --- a/src/windowsPtyAgent.ts
 +++ b/src/windowsPtyAgent.ts
-@@ -143,6 +143,9 @@ export class WindowsPtyAgent {
-     if (this._useConpty) {
-       if (!this._useConptyDll) {
-         this._inSocket.readable = false;
-+        // The non-DLL path previously only flipped `readable`, leaving the
-+        // conin PipeWrap alive until the host exited (#947).
+@@ -154,13 +154,17 @@ export class WindowsPtyAgent {
+         });
+         (this._ptyNative as IConptyNative).kill(this._pty, this._useConptyDll);
+         this._conoutSocketWorker.dispose();
++        // Release conin only after the console-list fork and native kill.
++        // Closing it earlier aborts teardown and leaks both pipes (#947).
 +        this._inSocket.destroy();
-         this._outSocket.readable = false;
-         this._getConsoleProcessList().then(consoleProcessList => {
-           consoleProcessList.forEach((pid: number) => {
-@@ -159,9 +162,10 @@ export class WindowsPtyAgent {
+       } else {
          // Close the input write handle to signal the end of session.
          this._inSocket.destroy();
          (this._ptyNative as IConptyNative).kill(this._pty, this._useConptyDll);
@@ -1355,6 +1394,47 @@ index d7054449516f0c9a62af351c2caa17331206d530..0c28a32e2e1db2b3f208ddde8443cd4e
        }
      } else {
        // Because pty.kill closes the handle, it will kill most processes by itself.
+@@ -189,14 +193,35 @@ export class WindowsPtyAgent {
+   private _getConsoleProcessList(): Promise<number[]> {
+     return new Promise<number[]>(resolve => {
+-      const agent = fork(path.join(__dirname, 'conpty_console_list_agent'), [ this._innerPid.toString() ]);
+-      agent.on('message', message => {
++      const fallback = [ this._innerPid ];
++      let agent: ReturnType<typeof fork>;
++      try {
++        agent = fork(path.join(__dirname, 'conpty_console_list_agent'), [ this._innerPid.toString() ]);
++      } catch {
++        resolve(fallback);
++        return;
++      }
++      let settled = false;
++      const finish = (list: number[]): void => {
++        if (settled) {
++          return;
++        }
++        settled = true;
+         clearTimeout(timeout);
+-        resolve(message.consoleProcessList);
++        resolve(list);
++      };
++      agent.on('message', message => {
++        finish(message && Array.isArray(message.consoleProcessList) ? message.consoleProcessList : fallback);
+       });
++      // A failed helper must not crash the daemon or abort ConPTY teardown.
++      agent.on('error', () => finish(fallback));
+       const timeout = setTimeout(() => {
+         // Something went wrong, just send back the shell PID
+-        agent.kill();
+-        resolve([ this._innerPid ]);
++        try {
++          agent.kill();
++        } catch {
++          // The helper may already have exited.
++        }
++        finish(fallback);
+       }, 5000);
+     });
+   }
 diff --git a/src/windowsTerminal.ts b/src/windowsTerminal.ts
 index 13f6c6d..eda63c8 100644
 --- a/src/windowsTerminal.ts

@@ -1,3 +1,4 @@
+import { isTmuxInnerSubject } from '../../../shared/tmux-agent-hook-owner'
 import type {
   AgentStatusClearIpcPayload,
   AgentStatusIpcPayload
@@ -20,11 +21,24 @@ import { toAgentStatusIpcPayload } from './server-status-identity'
 import { AgentHookServerState } from './server-state'
 import { serializeAgentStatusSubject } from '../../../shared/agent-status-subject'
 import { structuredStatusLegacyEvent } from './server-structured-status-row'
+import type { TuiAgent } from '../../../shared/tui-agent'
 
 // Why: the listing counter starts at 1, so an unassigned row must sort last — never above every ordered row.
 const UNORDERED_STATUS_ROW = Number.MAX_SAFE_INTEGER
 
 export abstract class AgentHookServerListeners extends AgentHookServerState {
+  setLocalTerminalAgentResolver(resolver: ((paneKey: string) => TuiAgent | null) | null): void {
+    this.localTerminalAgentResolver = resolver
+  }
+
+  setStartupPromptClaimListener(
+    listener: (body: unknown) => boolean | 'pending',
+    clear: () => void
+  ): void {
+    this.onStartupPromptClaim = listener
+    this.clearStartupPromptClaims = clear
+  }
+
   protected emitEnrichedStatus(enriched: EnrichedAgentHookEventPayload): void {
     this.onAgentStatus?.(enriched)
     for (const listener of this.enrichedStatusListeners) {
@@ -54,7 +68,7 @@ export abstract class AgentHookServerListeners extends AgentHookServerState {
       })
     }
     for (const parent of this.canonicalStatusStore.getParents()) {
-      if (!parent.status) {
+      if (!parent.status || isTmuxInnerSubject(parent.subject)) {
         continue
       }
       rows.push({

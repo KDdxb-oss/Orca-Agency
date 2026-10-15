@@ -21,6 +21,8 @@ import { formatTerminalPasteExecutionError } from './terminal-paste-errors'
 import { recordTerminalUserInputForLeaf } from './terminal-input-activity'
 import { scheduleImagePasteWebglAtlasRecovery } from './terminal-webgl-atlas-recovery'
 import { pasteTerminalClipboard } from './terminal-clipboard-paste'
+import { resolveProtectedMultilinePasteOptionsForPane } from './terminal-agent-paste-bracketing'
+import { resolveTerminalInputHostPlatform } from './terminal-input-host-platform'
 import type { ReadClipboardTextOptions } from '../../../../shared/clipboard-text'
 import type { TerminalPaneCloseController } from './use-terminal-pane-close-actions'
 
@@ -57,6 +59,26 @@ export function createTerminalPanePasteExecution(
       ptyId
     })
 
+  const resolveProtectedMultilineOptions = (
+    pane: ManagedPane
+  ): TerminalPasteTextOptions | undefined => {
+    const state = useAppStore.getState()
+    const transport = paneTransportsRef.current.get(pane.id) ?? null
+    return resolveProtectedMultilinePasteOptionsForPane({
+      isWindowsClient: forceBracketedMultilineTextPaste,
+      hostPlatform: resolveTerminalInputHostPlatform({
+        clientPlatform: shortcutPlatform,
+        state,
+        worktreeId,
+        transport
+      }),
+      agentStatusByPaneKey: state.agentStatusByPaneKey,
+      paneForegroundAgentByPaneKey: state.paneForegroundAgentByPaneKey,
+      tabId,
+      leafId: pane.leafId
+    })
+  }
+
   const executePanePasteText = async (
     pane: ManagedPane,
     source: TerminalPasteSource,
@@ -88,12 +110,13 @@ export function createTerminalPanePasteExecution(
       },
       forceBracketedPaste: options?.forceBracketedPaste,
       forceBracketedPasteForMultiline: options?.forceBracketedPasteForMultiline,
+      windowsInputRecordNewline: options?.windowsInputRecordNewline,
       terminalBracketedPasteMode: pane.terminal.modes.bracketedPasteMode
     })
     const execution = await executeTerminalPastePlan(plan, {
       pasteText: (pasteText, pasteOptions) =>
         pasteTerminalText(pane.terminal, pasteText, pasteOptions),
-      writePty: (data) => writeTerminalPastePtyInput(transport, data, 'driving'),
+      writePty: (data, signal) => writeTerminalPastePtyInput(transport, data, 'driving', signal),
       isTargetCurrent: () => {
         if (!isPanePasteTargetMounted(pane, transport, ptyId)) {
           return false
@@ -125,10 +148,8 @@ export function createTerminalPanePasteExecution(
       .readClipboardText
   ): void => {
     const connectionId = getConnectionId(worktreeId) ?? null
-    const runtimeEnvironmentId = getRuntimeEnvironmentIdForWorktree(
-      useAppStore.getState(),
-      worktreeId
-    )
+    const state = useAppStore.getState()
+    const runtimeEnvironmentId = getRuntimeEnvironmentIdForWorktree(state, worktreeId)
     const activeElementAtDispatch = document.activeElement
     void pasteTerminalClipboard({
       readClipboardText,
@@ -136,6 +157,7 @@ export function createTerminalPanePasteExecution(
       connectionId,
       runtimeEnvironmentId,
       forceBracketedMultilineTextPaste,
+      protectedMultilineTextPasteOptions: resolveProtectedMultilineOptions(pane),
       pasteText: (text, options) =>
         executePanePasteText(pane, source, activeElementAtDispatch, text, options),
       onTextPasteError: () =>
@@ -146,5 +168,5 @@ export function createTerminalPanePasteExecution(
     })
   }
 
-  return { executePanePasteText, pasteFromClipboard }
+  return { executePanePasteText, pasteFromClipboard, resolveProtectedMultilineOptions }
 }

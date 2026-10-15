@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react'
+import React, { useCallback, useSyncExternalStore } from 'react'
 import { Loader2, Settings as SettingsIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { DropdownMenuItem, DropdownMenuShortcut } from '@/components/ui/dropdown-menu'
@@ -8,6 +8,7 @@ import { useAgentDetectionTargetForWorktree } from '@/hooks/useAgentDetectionTar
 import { useDetectedAgents } from '@/hooks/useDetectedAgents'
 import { useOptionalShortcutLabel } from '@/hooks/useShortcutLabel'
 import { launchAgentInNewTab } from '@/lib/launch-agent-in-new-tab'
+import { newAgentLaunchRequestId } from '@/lib/agent-launch-request-id'
 import { isAgentSessionHandleProvider } from '../../../../shared/agent-session-provider-handle'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 import type { TuiAgent } from '../../../../shared/tui-agent'
@@ -18,7 +19,12 @@ import {
   filterEnabledTuiAgents
 } from '../../../../shared/tui-agent-selection'
 import { translate } from '@/i18n/i18n'
-import { useStructuredAgentLaunchStatus } from '@/lib/structured-agent-session-launch'
+import {
+  getStructuredAgentLaunchStatus,
+  subscribeStructuredAgentLaunchStatus
+} from '@/lib/structured-agent-session-launch'
+import { newAgentPromptOutcome } from '@/lib/new-agent-prompt-outcome'
+import { activeAgentNotesSendFailureMessage } from '@/lib/active-agent-note-send-result'
 
 export type QuickLaunchAgentMenuItemsProps = {
   worktreeId: string
@@ -29,7 +35,8 @@ export type QuickLaunchAgentMenuItemsProps = {
   groupId?: string
   /** Called with the new tab id once it exists. The tab bar focuses it, the
    *  session grid mounts it in the background — this component owns neither. */
-  onLaunched: (tabId: string) => void
+  onLaunched?: (tabId: string) => void
+  onFocusTerminal?: (tabId: string) => void
   /** The launch surface owns navigation to the created native chat. */
   onStructuredLaunched?: (sessionId: string) => void
   /** Host publication has no local tab ID; the picker can close after dispatch. */
@@ -46,6 +53,8 @@ export type QuickLaunchAgentMenuItemsProps = {
   launchSource?: LaunchSource
   /** Called after a prompt is queued into the agent, or immediately for argv prompt launches. */
   onPromptDelivered?: () => void
+  onPromptHandedOff?: (delivered: Promise<unknown>) => void
+  disabled?: boolean
   /** Whether the launched tab takes the foreground. Default true, which is what the tab bar's
    *  `+` wants; a surface launching into a workspace it is not standing in passes false. */
   activate?: boolean
@@ -148,12 +157,15 @@ export function useQuickLaunchAgents({
   executionHostId,
   groupId,
   onLaunched,
+  onFocusTerminal,
   onStructuredLaunched,
   onHostPublished,
   prompt,
   promptDelivery,
   launchSource,
   onPromptDelivered,
+  onPromptHandedOff,
+  disabled = false,
   activate
 }: QuickLaunchAgentMenuItemsProps): QuickLaunchAgentsController {
   // Why: resolving only the SSH connectionId here made paired-runtime
@@ -172,8 +184,16 @@ export function useQuickLaunchAgents({
   // One hook per structured provider: the launch registry is keyed by agent, and hooks cannot run
   // inside the agent list's render loop.
   const structuredLaunchStatusByAgent = {
-    claude: useStructuredAgentLaunchStatus(worktreeId, 'claude'),
-    codex: useStructuredAgentLaunchStatus(worktreeId, 'codex')
+    claude: useSyncExternalStore(
+      subscribeStructuredAgentLaunchStatus,
+      () => getStructuredAgentLaunchStatus(worktreeId, 'claude'),
+      () => 'idle'
+    ),
+    codex: useSyncExternalStore(
+      subscribeStructuredAgentLaunchStatus,
+      () => getStructuredAgentLaunchStatus(worktreeId, 'codex'),
+      () => 'idle'
+    )
   }
 
   const openAgentSettings = useCallback(() => {
@@ -183,9 +203,13 @@ export function useQuickLaunchAgents({
 
   const runLaunch = useCallback(
     (agent: TuiAgent) => {
+      if (disabled) {
+        return
+      }
       const entry = getCatalogEntry(agent)
       const label = entry?.label ?? agent
       const result = launchAgentInNewTab({
+        requestId: newAgentLaunchRequestId(),
         agent,
         worktreeId,
         ...(executionHostId !== undefined ? { executionHostId } : {}),
@@ -194,7 +218,8 @@ export function useQuickLaunchAgents({
         ...(promptDelivery !== undefined ? { promptDelivery } : {}),
         ...(launchSource !== undefined ? { launchSource } : {}),
         ...(activate !== undefined ? { activate } : {}),
-        ...(onPromptDelivered !== undefined ? { onPromptDelivered } : {})
+        ...(onPromptDelivered !== undefined ? { onPromptDelivered } : {}),
+        ...(onPromptHandedOff ? { promptKeptByCaller: true as const } : {})
       })
       if (!result) {
         toast.error(
@@ -205,6 +230,25 @@ export function useQuickLaunchAgents({
           )
         )
         return
+      }
+      if (onPromptHandedOff && result.promptDeliveryResult) {
+        const outcome = newAgentPromptOutcome({ delivery: result.promptDeliveryResult })
+        onPromptHandedOff(outcome)
+        void outcome.then(({ failure }) => {
+          if (failure) {
+            toast.error(
+              translate('auto.store.slices.ui.53883b7bc3', "Couldn't send to {{value0}}", {
+                value0: label
+              }),
+              {
+                description: activeAgentNotesSendFailureMessage(failure.status, {
+                  explicitTarget: true,
+                  code: failure.code
+                })
+              }
+            )
+          }
+        })
       }
       if (result.surface.kind === 'host-published') {
         onHostPublished?.()
@@ -222,7 +266,8 @@ export function useQuickLaunchAgents({
         // next session-tabs snapshot instead of a local tab id.
         return
       }
-      onLaunched(result.surface.tabId)
+      onLaunched?.(result.surface.tabId)
+      onFocusTerminal?.(result.surface.tabId)
 
       // Why: launch success means the terminal session exists. Agent readiness
       // can lag behind on slow machines, and prompt paste flows already own
@@ -254,13 +299,16 @@ export function useQuickLaunchAgents({
       executionHostId,
       groupId,
       onLaunched,
+      onFocusTerminal,
       onStructuredLaunched,
       onHostPublished,
       prompt,
       promptDelivery,
       launchSource,
       activate,
-      onPromptDelivered
+      onPromptDelivered,
+      onPromptHandedOff,
+      disabled
     ]
   )
 
@@ -317,7 +365,7 @@ function QuickLaunchAgentMenuItemsInner(props: QuickLaunchAgentMenuItemsProps): 
         return (
           <DropdownMenuItem
             key={agent}
-            disabled={isStructuredLaunchPending}
+            disabled={props.disabled || isStructuredLaunchPending}
             onSelect={() => runLaunch(agent)}
             className="gap-2 rounded-[7px] px-2 py-1.5 text-[12px] leading-5 font-medium"
             title={translate(

@@ -77,6 +77,20 @@ describe('classifySubprocessCommand', () => {
 })
 
 describe('recordSubprocessSpawn', () => {
+  it('enables only the explicitly launched process without changing the inherited environment', () => {
+    vi.stubEnv(MAIN_THREAD_DIAGNOSTICS_ENV, '')
+    const originalArgv = process.argv
+    try {
+      process.argv = [...originalArgv, '--orca-main-thread-diagnostics']
+      expect(isMainThreadDiagnosticsEnabled()).toBe(true)
+      expect(process.env[MAIN_THREAD_DIAGNOSTICS_ENV]).toBe('')
+      process.argv = originalArgv
+      expect(isMainThreadDiagnosticsEnabled()).toBe(false)
+    } finally {
+      process.argv = originalArgv
+    }
+  })
+
   it('is a no-op when the diagnostics env var is unset', () => {
     vi.stubEnv(MAIN_THREAD_DIAGNOSTICS_ENV, '')
     expect(isMainThreadDiagnosticsEnabled()).toBe(false)
@@ -98,6 +112,30 @@ describe('recordSubprocessSpawn', () => {
 })
 
 describe('startMainThreadChurnProbe', () => {
+  it('writes timestamped resource and spawn measurements to the selected sink', async () => {
+    vi.stubEnv(MAIN_THREAD_DIAGNOSTICS_ENV, '1')
+    const sink = vi.fn()
+    writeStartupDiagnosticLineMock.mockClear()
+    vi.useFakeTimers()
+    try {
+      startMainThreadChurnProbe({ writeLine: sink })
+      recordSubprocessSpawn('icacls.exe', ['private/path', '/grant', 'private-account'], 40)
+      await vi.advanceTimersByTimeAsync(5_100)
+    } finally {
+      vi.useRealTimers()
+    }
+    const line = String(sink.mock.calls.at(-1)?.[0] ?? '')
+    expect(JSON.parse(line.replace('[main-thread] ', ''))).toMatchObject({
+      at: expect.any(String),
+      pid: process.pid,
+      cpuMs: expect.any(Number),
+      rssBytes: expect.any(Number),
+      spawns: { icacls: { count: 1, blockMsTotal: 40, blockMsMax: 40 } }
+    })
+    expect(line).not.toContain('private')
+    expect(writeStartupDiagnosticLineMock).not.toHaveBeenCalled()
+  })
+
   // Counters nothing reads are counters nobody can act on: the probe report is what makes
   // "the diff cache never hit" visible outside a test run.
   it('folds caller-contributed counters into the report line', async () => {

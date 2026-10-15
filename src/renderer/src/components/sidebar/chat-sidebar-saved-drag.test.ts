@@ -82,6 +82,14 @@ describe('saved chat sidebar drop', () => {
     placement.onResumed()
     expect(state.placeWorkspaceAtEdge).toHaveBeenCalledWith('separate', 'other', 'bottom')
   })
+  it('uses the source workspace when an ungrouped chat cannot create a separate workspace', async () => {
+    mocks.createSeparate.mockResolvedValue(chatWorktree)
+    await resumeSavedChatAtDrop(row, target, resume)
+    expect(mocks.createSeparate).toHaveBeenCalledWith(row, { useSourceWhenUngrouped: true })
+    expect(resume).toHaveBeenCalledWith(session, chatWorktree.id, expect.any(Object))
+    resume.mock.calls[0][2].onSettled('not-created')
+    expect(mocks.discard).not.toHaveBeenCalled()
+  })
 
   it.each([false, true])(
     'honors the reported fork identity when the tab link is stale=%s',

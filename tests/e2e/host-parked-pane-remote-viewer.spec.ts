@@ -280,9 +280,72 @@ test('a cold-parked host pane keeps serving its paired remote viewer', async ({
         }
       }, webTabId)
     console.log(`[sta2854] before-park client=${JSON.stringify(await readClientState())}`)
-    await parkHiddenTabBehindDecoy(orcaPage, worktreeId, hostTabId, {
-      parkDelayMs: PARK_DELAY_MS
-    })
+    try {
+      await parkHiddenTabBehindDecoy(orcaPage, worktreeId, hostTabId, {
+        parkDelayMs: PARK_DELAY_MS,
+        requireRestorableDecoy: true
+      })
+    } catch (error) {
+      const diagnosis = await orcaPage.evaluate(
+        async ({ worktreeId, hostTabId }) => {
+          const state = window.__store?.getState()
+          const tab = state?.tabsByWorktree[worktreeId]?.find(
+            (candidate) => candidate.id === hostTabId
+          )
+          const siblingTabs = state?.tabsByWorktree[worktreeId] ?? []
+          const ptyId = tab?.ptyId ?? null
+          let snapshotCapability: unknown = null
+          if (ptyId) {
+            try {
+              const inspectCapability = window.api.pty.getAuthoritativeBufferSnapshotCapabilities
+              snapshotCapability = inspectCapability ? await inspectCapability([ptyId]) : null
+            } catch (cause) {
+              snapshotCapability = String(cause)
+            }
+          }
+          return {
+            activeTabId: state?.activeTabId,
+            tab,
+            siblingTabs: siblingTabs.map((sibling) => ({
+              id: sibling.id,
+              title: sibling.title,
+              ptyId: sibling.ptyId,
+              pendingActivationSpawn: sibling.pendingActivationSpawn,
+              cachedAuthoritativeSnapshot: sibling.ptyId
+                ? window.__terminalParkingDebug?.authoritativeSnapshot(sibling.ptyId)
+                : null
+            })),
+            layout: state?.terminalLayoutsByTabId[hostTabId],
+            pendingStartup: state?.pendingStartupByTabId[hostTabId],
+            parkingEnabled: state?.settings?.terminalHiddenViewParking !== false,
+            parkDelayMs: window.__terminalParkingDebug?.parkDelayMs,
+            parkedTabIds: window.__terminalParkingDebug?.parkedTabIds(),
+            cachedAuthoritativeSnapshot: ptyId
+              ? window.__terminalParkingDebug?.authoritativeSnapshot(ptyId)
+              : null,
+            snapshotCapability
+          }
+        },
+        { worktreeId, hostTabId }
+      )
+      console.log(`[sta2854] park-failure-diagnosis=${JSON.stringify(diagnosis)}`)
+      throw error
+    }
+    console.log(
+      `[sta2854] host-snapshot-capability=${JSON.stringify(
+        await orcaPage.evaluate(
+          ({ worktreeId, hostTabId }) => {
+            const tab = window.__store
+              ?.getState()
+              .tabsByWorktree[worktreeId]?.find((candidate) => candidate.id === hostTabId)
+            return tab?.ptyId
+              ? window.__terminalParkingDebug?.authoritativeSnapshot(tab.ptyId)
+              : null
+          },
+          { worktreeId, hostTabId }
+        )
+      )}`
+    )
     console.log(`[sta2854] post-park client=${JSON.stringify(await readClientState())}`)
 
     // Direct probe: is the host-minted terminal handle still resolvable once

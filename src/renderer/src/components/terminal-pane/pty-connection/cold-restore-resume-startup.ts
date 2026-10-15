@@ -21,6 +21,7 @@ import type { ColdRestoreAgentResumeStartup } from './fresh-spawn-types'
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 import { savedTabResume } from './saved-tab-resume'
 import { savedResumePaths } from './saved-resume-paths'
+import { getAiVaultAgentProviderSession } from '@/lib/ai-vault-resume-command'
 import { parseWslUncPath } from '../../../../../shared/wsl-paths'
 import {
   buildAiVaultResumeShellCommand,
@@ -75,7 +76,7 @@ export function bindBuildColdRestoreAgentResumeStartup(session: ConnectPanePtySe
       useLiveEntry
         ? entry.providerSession
         : ((useSavedProof ? undefined : sleepingRecord?.providerSession) ??
-            (saved ? { key: 'session_id', id: saved.sessionId } : undefined))
+            (saved ? getAiVaultAgentProviderSession(saved) : undefined))
     )
     if (!providerSession) {
       return null

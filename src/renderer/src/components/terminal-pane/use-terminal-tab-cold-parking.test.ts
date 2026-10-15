@@ -85,6 +85,10 @@ import {
   TERMINAL_TAB_PARK_FLIP_WINDOW_MS
 } from './terminal-park-verdict-flip-telemetry'
 import { BACKGROUND_WORKTREE_MEASURE_WINDOW_MS } from '../terminal/background-terminal-worktree-visibility'
+import {
+  clearTerminalProviderSnapshotCapabilities,
+  synchronizeTerminalProviderSnapshotCapabilities
+} from '../terminal/terminal-provider-snapshot-capability'
 import { queueTerminalPaneSplitRequest } from './terminal-pane-split-request-routing'
 import { useTerminalTabColdParking } from './use-terminal-tab-cold-parking'
 
@@ -113,6 +117,7 @@ describe('useTerminalTabColdParking measure-clock contract', () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000_000)
     mocks.coldParkSelectCalls = 0
+    clearTerminalProviderSnapshotCapabilities()
   })
 
   afterEach(() => {
@@ -157,6 +162,57 @@ describe('useTerminalTabColdParking measure-clock contract', () => {
       vi.advanceTimersByTime(TERMINAL_TAB_HOT_RETAIN_MS + 1)
     })
 
+    expect(result.current).toEqual(new Set(['tab-1']))
+  })
+
+  it('parks a past-deadline tab when its watcher snapshot capability becomes available', async () => {
+    mocks.watcherCoverage = false
+    const assignments = new Map([
+      ['tab-1', { groupId: 'group-1', isActiveInGroup: false }],
+      ['tab-2', { groupId: 'group-1', isActiveInGroup: true }]
+    ])
+    const args = {
+      ...hookArgs(false),
+      assignments,
+      isWorktreeActive: true,
+      activeTerminalTabId: 'tab-2'
+    }
+    const { result, rerender } = renderHook(useTerminalTabColdParking, { initialProps: args })
+    rerender({ ...args, isWorktreeActive: false })
+    act(() => vi.advanceTimersByTime(TERMINAL_TAB_HOT_RETAIN_MS + 1))
+    expect(result.current).toEqual(new Set())
+
+    mocks.watcherCoverage = true
+    await act(async () => {
+      await synchronizeTerminalProviderSnapshotCapabilities(['wt-1@@session-tab-1'], async (ids) =>
+        ids.map((id) => ({ id, authoritative: true }))
+      )
+    })
+    expect(result.current).toEqual(new Set(['tab-1']))
+  })
+
+  it('starts coverage for a deferred folder tab when snapshot capability becomes available', async () => {
+    mocks.watcherCoverage = false
+    const folderId = 'folder:folder-1'
+    const args = {
+      ...hookArgs(false),
+      worktreeId: folderId,
+      terminalTabs: [{ ...terminalTab('tab-1'), ptyId: `${folderId}@@session-tab-1` }],
+      assignments: new Map([['tab-1', { groupId: 'group-1', isActiveInGroup: true }]]),
+      isWorktreeActive: true,
+      activeTerminalTabId: 'tab-1',
+      activationDeferredMountTabIds: new Set(['tab-1'])
+    }
+    const { result } = renderHook(() => useTerminalTabColdParking(args))
+    expect(result.current).toEqual(new Set())
+
+    mocks.watcherCoverage = true
+    await act(async () => {
+      await synchronizeTerminalProviderSnapshotCapabilities(
+        [`${folderId}@@session-tab-1`],
+        async (ids) => ids.map((id) => ({ id, authoritative: true }))
+      )
+    })
     expect(result.current).toEqual(new Set(['tab-1']))
   })
 
@@ -446,6 +502,24 @@ describe('useTerminalTabColdParking measure-clock contract', () => {
       rerender(stableArgs)
     })
     expect(result.current).toEqual(new Set(['tab-2']))
+  })
+
+  it('re-resolves force-park exemptions when snapshot coverage becomes authoritative', async () => {
+    mocks.exemptTabIds = new Set(['tab-1'])
+    const args = { ...hookArgs(false), coldParkTerminalPanes: true, isForceParked: true }
+    const { result } = renderHook(() => useTerminalTabColdParking(args))
+    expect(result.current).toEqual(new Set(['tab-2']))
+    const before = mocks.exemptSelectCalls
+
+    mocks.exemptTabIds.clear()
+    await act(async () => {
+      await synchronizeTerminalProviderSnapshotCapabilities(['wt-1@@session-tab-1'], async (ids) =>
+        ids.map((id) => ({ id, authoritative: true }))
+      )
+    })
+
+    expect(mocks.exemptSelectCalls).toBeGreaterThan(before)
+    expect(result.current).toEqual(new Set(['tab-1', 'tab-2']))
   })
 
   // Why: resolving an exemption re-reads the store and walks the layout tree per

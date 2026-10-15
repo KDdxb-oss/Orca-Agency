@@ -1,10 +1,7 @@
-import {
-  preferLongestNonOverlappingLinks,
-  type ProvidedFileLink
-} from './terminal-file-link-overlap'
 import { createTerminalPathExistenceBatch } from './terminal-path-existence-batch'
-import type { IDisposable, ILinkProvider, Terminal } from '@xterm/xterm'
+import type { IDisposable, ILink, ILinkProvider, Terminal } from '@xterm/xterm'
 import { extractTerminalFileLinkCandidates, extractTerminalFileLinks } from '@/lib/terminal-links'
+import { preferLongestNonOverlappingMatches } from '@/lib/longest-non-overlapping-matches'
 import {
   buildCandidateLogicalLinesForBufferPosition,
   dedupeLogicalLines,
@@ -12,13 +9,18 @@ import {
 } from './terminal-file-link-hit-testing'
 import {
   isHtmlFilePath,
-  getTerminalFileContext,
   shouldOpenTerminalFileWithSystemDefault
 } from './terminal-file-open-routing'
+import { fileLinkTargetExists, resolveFileLinkTarget } from './terminal-file-link-target'
+import {
+  collectPriorTerminalFileLinkAnchors,
+  resolveExistingTerminalFileLinkPath
+} from './terminal-relative-file-link-context'
 import {
   buildHardWrappedPathLogicalLineCandidates,
   buildWrappedLogicalLine,
-  rangeForParsedFileLink
+  rangeForParsedFileLink,
+  type WrappedLogicalLine
 } from './wrapped-terminal-link-ranges'
 import {
   getTerminalHtmlFileOpenHint,
@@ -27,15 +29,10 @@ import {
   getTerminalFileOpenHint,
   getTerminalUrlOpenHint
 } from './terminal-link-open-hints'
-import { resolveKnownWorktreeRootPathLink } from './terminal-worktree-path-link'
 import { isTerminalLinkDirectActivation } from './terminal-link-activation'
 import { getTerminalBufferPositionForMouseEvent } from './terminal-mouse-buffer-position'
 import type { TerminalLinkActionContext } from './terminal-link-action-request'
 import { handleTerminalFileLink } from './terminal-file-link-actions'
-import {
-  collectPriorTerminalFileLinkAnchors,
-  resolveExistingTerminalFileLinkPath
-} from './terminal-relative-file-link-context'
 
 export { openDetectedFilePath } from './terminal-file-open-routing'
 export { mapTerminalFilePath } from './terminal-file-open-routing'
@@ -48,9 +45,7 @@ export type LinkHandlerDeps = {
   worktreePath: string
   startupCwd: string
   getPaneLinkCwd?: (paneId: number) => string | null
-  managerRef: React.RefObject<{
-    getPanes: () => { id: number; terminal: Pick<Terminal, 'buffer' | 'clearSelection'> }[]
-  } | null>
+  managerRef: React.RefObject<{ getPanes: () => { id: number; terminal: Terminal }[] } | null>
   linkProviderDisposablesRef: React.RefObject<Map<number, IDisposable>>
   pathExistsCache: Map<string, boolean>
   runtimeEnvironmentId?: string | null
@@ -58,7 +53,28 @@ export type LinkHandlerDeps = {
   wslDistro?: string | null
   getRuntimeEnvironmentIdForPane?: (paneId: number) => string | null
   getLinkActionContext?: (paneId: number) => TerminalLinkActionContext | null
-  isCurrent?: () => boolean
+}
+
+type ProvidedFileLink = {
+  link: ILink
+  logicalLine: WrappedLogicalLine
+}
+
+function rangesOverlap(left: ILink['range'], right: ILink['range']): boolean {
+  const leftStartsAfterRightEnds =
+    left.start.y > right.end.y || (left.start.y === right.end.y && left.start.x > right.end.x)
+  const rightStartsAfterLeftEnds =
+    right.start.y > left.end.y || (right.start.y === left.end.y && right.start.x > left.end.x)
+  return !leftStartsAfterRightEnds && !rightStartsAfterLeftEnds
+}
+
+function preferLongestNonOverlappingLinks(links: ProvidedFileLink[]): ProvidedFileLink[] {
+  return preferLongestNonOverlappingMatches(links, {
+    length: ({ link }) => link.text.length,
+    overlaps: (left, right) => rangesOverlap(left.link.range, right.link.range),
+    compareStart: (a, b) =>
+      a.link.range.start.y - b.link.range.start.y || a.link.range.start.x - b.link.range.start.x
+  })
 }
 
 export function createFilePathLinkProvider(
@@ -70,10 +86,6 @@ export function createFilePathLinkProvider(
   const { startupCwd, managerRef, pathExistsCache, worktreeId, worktreePath } = deps
   return {
     provideLinks: (bufferLineNumber, callback) => {
-      if (deps.isCurrent?.() === false) {
-        callback(undefined)
-        return
-      }
       const pane = managerRef.current?.getPanes().find((candidate) => candidate.id === paneId)
       if (!pane) {
         callback(undefined)
@@ -114,33 +126,44 @@ export function createFilePathLinkProvider(
             async (parsed): Promise<ProvidedFileLink | null> => {
               const runtimeEnvironmentId =
                 deps.getRuntimeEnvironmentIdForPane?.(paneId) ?? deps.runtimeEnvironmentId ?? null
-              const range = rangeForParsedFileLink(logicalLine, parsed.startIndex, parsed.endIndex)
-              if (!range) {
-                return null
-              }
-              const fileContext = getTerminalFileContext(
-                worktreeId,
-                worktreePath,
-                runtimeEnvironmentId
-              )
-              const mappedPath = await resolveExistingTerminalFileLinkPath({
-                parsed,
-                buffer,
-                bufferLineNumber,
+              const target = resolveFileLinkTarget(parsed, {
                 cwd: paneLinkCwd,
                 homePath: deps.terminalHomePath,
+                worktreeId,
                 worktreePath,
-                wslDistro: deps.wslDistro,
                 runtimeEnvironmentId,
-                fileContext,
-                pathExistsCache,
-                pathExists,
-                getPriorAnchors
+                wslDistro: deps.wslDistro
               })
+              const range = rangeForParsedFileLink(logicalLine, parsed.startIndex, parsed.endIndex)
+              if (!target || !range) {
+                return null
+              }
+              const usePaneContext =
+                !target.isKnownWorktreeRoot && /^[\p{L}\p{N}._-]+[\\/]/u.test(parsed.pathText)
+              const mappedPath = usePaneContext
+                ? target.fileContext.sourceHostResolved
+                  ? await resolveExistingTerminalFileLinkPath({
+                      parsed,
+                      buffer,
+                      bufferLineNumber,
+                      cwd: paneLinkCwd,
+                      homePath: deps.terminalHomePath,
+                      worktreePath,
+                      wslDistro: deps.wslDistro,
+                      runtimeEnvironmentId,
+                      fileContext: target.fileContext,
+                      pathExistsCache,
+                      pathExists,
+                      getPriorAnchors
+                    })
+                  : null
+                : (await fileLinkTargetExists(target, pathExistsCache, pathExists))
+                  ? target.absolutePath
+                  : null
               if (!mappedPath) {
                 return null
               }
-              const worktreeRootLink = resolveKnownWorktreeRootPathLink(mappedPath)
+              const { fileContext } = target
 
               return {
                 logicalLine,
@@ -148,14 +171,11 @@ export function createFilePathLinkProvider(
                   range,
                   text: parsed.displayText,
                   activate: (event) => {
-                    if (deps.isCurrent?.() === false) {
-                      return
-                    }
                     if (
                       handleTerminalFileLink(
                         mappedPath,
-                        parsed.line,
-                        parsed.column,
+                        target.line,
+                        target.column,
                         event,
                         {
                           worktreeId,
@@ -179,7 +199,7 @@ export function createFilePathLinkProvider(
                     const showActions = deps.getLinkActionContext
                       ? deps.getLinkActionContext(paneId) !== null
                       : true
-                    const hint = worktreeRootLink
+                    const hint = target.isKnownWorktreeRoot
                       ? getTerminalWorktreePathOpenHint(canOpenWithSystemDefault, showActions)
                       : canOpenWithSystemDefault
                         ? isHtmlFilePath(mappedPath)
@@ -202,10 +222,6 @@ export function createFilePathLinkProvider(
       )
         .then(
           (resolvedLinks) => {
-            if (deps.isCurrent?.() === false) {
-              callback(undefined)
-              return
-            }
             const latestFingerprints = new Set(
               buildCandidateLogicalLinesForBufferPosition(buffer, bufferLineNumber).map(
                 (logicalLine) => logicalLine.fingerprint
@@ -243,7 +259,7 @@ export function installFilePathLinkClickFallback(
 ): IDisposable {
   const mouseUpListenerOptions = { capture: true }
   const handleMouseUp = (event: MouseEvent): void => {
-    if (deps.isCurrent?.() === false || !isTerminalLinkDirectActivation(event)) {
+    if (!isTerminalLinkDirectActivation(event)) {
       return
     }
 

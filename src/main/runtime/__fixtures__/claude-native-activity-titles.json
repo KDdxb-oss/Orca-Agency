@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-10-06T21:25:39.623Z",
+  "source": "Native Claude Code OSC title bytes captured read-only from a surviving Windows ARM64 PTY on October 6, 2026. Prompt, terminal and session identities omitted. Conversation title replaced with same-length X characters. Native ST terminators preserved.",
+  "frames": [
+    "\u001b]0;\u25d0 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX \u2442\u001b\\",
+    "\u001b]0;\u25d1 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX \u2442\u001b\\",
+    "\u001b]0;\u2733 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX \u2442\u001b\\"
+  ],
+  "limits": "Working and completed response titles only. No permission or AskUserQuestion transcript captured; canonical permission/background states remain protected, and fresh working recovers a false native settlement."
+}

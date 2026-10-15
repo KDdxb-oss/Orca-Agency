@@ -2,7 +2,6 @@
 import { renderHook, cleanup } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Worktree } from '../../../../../../shared/worktree/types'
-import { cloneDefaultWorkspaceStatuses } from '../../../../../../shared/workspace-statuses'
 import { useSidebarWorktreeSortOrder } from './use-sort-order'
 
 const state = vi.hoisted(() => {
@@ -56,22 +55,18 @@ describe('status sorting before terminal startup', () => {
     const recent = workspace('recent', Date.now() - 1000, 0)
     state.worktreesByRepo = { repo: [old, recent] }
     const repoMap = new Map()
-    const workspaceStatuses = cloneDefaultWorkspaceStatuses()
     const { result, rerender } = renderHook(
-      ({ grouped }: { grouped: boolean }) =>
+      ({ sortBy }: { sortBy: 'smart' | 'recent' }) =>
         useSidebarWorktreeSortOrder({
-          allWorktrees: [old, recent],
           repoMap,
-          workspaceStatuses,
-          sortBy: 'smart',
-          groupBy: grouped ? 'workspace-status' : 'none'
+          sortBy
         }),
-      { initialProps: { grouped: false } }
+      { initialProps: { sortBy: 'smart' } }
     )
     expect(result.current).toEqual(['old', 'recent'])
-    rerender({ grouped: true })
+    rerender({ sortBy: 'recent' })
     expect(result.current).toEqual(['recent', 'old'])
-    rerender({ grouped: false })
+    rerender({ sortBy: 'smart' })
     expect(result.current).toEqual(['old', 'recent'])
   })
 })

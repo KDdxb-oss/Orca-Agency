@@ -3,12 +3,11 @@ import { MAX_PANE_KEY_LEN } from '../../../shared/agent-hook-listener/listener-l
 import { parseLegacyNumericPaneKey, parsePaneKey } from '../../../shared/stable-pane-id'
 import { terminalStatusPayloadMatchesHook } from '../../../shared/agent-terminal-status-equivalence'
 import type { ParsedAgentStatusPayload } from '../../../shared/agent-status-types'
-import { AGENT_WORKING_TITLE_REFRESH_AFTER_MS } from '../../../shared/agent-working-title-freshness'
 import type { EnrichedAgentHookEventPayload } from './server-types'
 import { isAgentStatusHeldOpenByChildWork } from '../../../shared/agent-lead-status-fold'
-import { AgentHookServerIngestNormalization } from './server-ingest-normalization'
+import { AgentHookServerTerminalWorkingEvidence } from './server-terminal-working-evidence'
 
-export abstract class AgentHookServerIngestTerminal extends AgentHookServerIngestNormalization {
+export abstract class AgentHookServerIngestTerminal extends AgentHookServerTerminalWorkingEvidence {
   ingestTerminalStatus(event: {
     ptyId?: string
     paneKey: string
@@ -24,6 +23,16 @@ export abstract class AgentHookServerIngestTerminal extends AgentHookServerInges
     /** Main observed a live provider title, never a cached or synthetic frame. */
     evidenceOnly?: true
     observedTerminalHandle?: string
+    /** Fresh native Codex output from the same retained local terminal. */
+    confirmRestoredWorkingTitle?: true
+    /** Same-process native Working after an inferred cancellation, verified by the local runtime. */
+    recoverCancelledWorkingTitle?: true
+    /** Fresh native Working contradicts a settled same-process Codex row with silent hooks. */
+    recoverSettledWorkingTitle?: true
+    /** Captured same-process native idle, never a replay or synthetic title. */
+    settleNativeIdleTitle?: true
+    /** Current local PTY launch authority; checked against any durable commitment. */
+    restoredLaunchToken?: string
   }): void {
     const physicalPaneKey = event.paneKey.trim()
     let paneKey = this.resolvePaneKeyAlias(physicalPaneKey)
@@ -51,59 +60,34 @@ export abstract class AgentHookServerIngestTerminal extends AgentHookServerInges
       return
     }
     const tabId = paneKey !== physicalPaneKey ? parsedPaneKey?.tabId : reportedTabId
+    const worktreeId = event.worktreeId?.trim() || undefined
+    const connectionId =
+      typeof event.connectionId === 'string' && event.connectionId.trim().length > 0
+        ? event.connectionId.trim()
+        : null
+    const retainedLaunchTokenHash = this.retainedOwnerLaunchTokenHash(paneKey, {
+      worktreeId,
+      connectionId
+    })
     // Why: a verified process-lifetime Working proves a new agent run, as a hook new-turn event does.
     const disposition = this.getAgentStatusDisposition(
       paneKey,
       event.origin === 'process' && event.payload.state === 'working'
         ? { processNewTurn: true }
-        : undefined
+        : this.restartedStatusLaunchTokenHashByPaneKey.get(paneKey)?.allowRetainedOwner
+          ? { retainedLaunchTokenHash }
+          : undefined
     )
     if (disposition === 'suppress') {
       return
     }
     if (event.evidenceOnly) {
-      const previous = this.state.lastStatusByPaneKey.get(paneKey) as
-        | EnrichedAgentHookEventPayload
-        | undefined
-      // Confirmation cannot create a row, transfer ownership, reopen a closed
-      // pane, clear restored provenance or date a new prompt/turn.
-      if (
-        disposition !== 'accept' ||
-        !event.ptyId ||
-        !event.terminalHandle ||
-        !previous ||
-        previous.restoredUnconfirmed ||
-        previous.providerSessionOnly ||
-        previous.structuredHost ||
-        previous.payload.state !== 'working' ||
-        (previous.payload.mainAgent && previous.payload.mainAgent.state !== 'working') ||
-        !event.payload.agentType ||
-        event.payload.agentType === 'unknown' ||
-        previous.payload.agentType !== event.payload.agentType ||
-        event.observedTerminalHandle !== event.terminalHandle ||
-        (previous.terminalHandle && previous.terminalHandle !== event.terminalHandle) ||
-        previous.tabId !== tabId ||
-        previous.worktreeId !== event.worktreeId ||
-        (previous.connectionId ?? null) !== (event.connectionId ?? null) ||
-        Date.now() - (previous.evidenceObservedAt ?? previous.receivedAt) <=
-          AGENT_WORKING_TITLE_REFRESH_AFTER_MS
-      ) {
-        return
-      }
-      this.refreshTerminalStatusEvidence(previous, undefined, true, previous.observation?.origin)
+      this.ingestWorkingTitleEvidence(event, paneKey, tabId, disposition === 'accept')
       return
     }
     if (disposition === 'restart') {
       this.observations.rebind(paneKey)
     }
-    const worktreeId =
-      event.worktreeId !== undefined && event.worktreeId.trim().length > 0
-        ? event.worktreeId.trim()
-        : undefined
-    const connectionId =
-      typeof event.connectionId === 'string' && event.connectionId.trim().length > 0
-        ? event.connectionId.trim()
-        : null
     const terminalHandle =
       typeof event.terminalHandle === 'string' && event.terminalHandle.trim().length > 0
         ? event.terminalHandle.trim()
@@ -141,8 +125,9 @@ export abstract class AgentHookServerIngestTerminal extends AgentHookServerInges
       hookOwnsCommand ||
       (previous?.payload.agentType === 'claude' &&
         event.payload.agentType === 'claude' &&
-        isAgentStatusHeldOpenByChildWork(previous.payload) &&
-        previous.payload.subagents?.some((subagent) => subagent.state === 'working') === true)
+        Boolean(previous.payload.subagents?.length) &&
+        (isAgentStatusHeldOpenByChildWork(previous.payload) ||
+          previous.payload.state === 'waiting'))
     ) {
       // Why: OSC carries no child identity, so it cannot settle or repaint a row child agents hold open
       // (working, or waiting on a child's prompt); their lifecycle hooks will.

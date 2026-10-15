@@ -61,6 +61,10 @@ const aiVaultSessionSchema = z.object({
   messageCount: z.number(),
   totalTokens: z.number(),
   previewMessages: z.array(sessionPreviewMessageSchema),
+  isHeadless: z.preprocess(
+    (value) => (value === true ? true : undefined),
+    z.literal(true).optional()
+  ),
   resumedSessionIdPrefix: z.preprocess(
     (value) => (typeof value === 'string' && /^[0-9a-f]{8}$/.test(value) ? value : undefined),
     z.string().optional()

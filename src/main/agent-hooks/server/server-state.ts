@@ -1,3 +1,7 @@
+import type {
+  AgentProcessPresence,
+  AgentProcessVerdict
+} from '../../../shared/agent-process-presence'
 import type { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
 
@@ -19,12 +23,13 @@ import {
 } from '../../../shared/agent-status-observation'
 import type { AgentHookEventPayload } from '../../../shared/agent-hook-listener/listener-event'
 import type { AgentHookSource } from '../../../shared/agent-hook-relay'
+import type { TuiAgent } from '../../../shared/tui-agent'
 import type { AgentStatusClearIpcPayload } from '../../../shared/agent-status-types'
 import type { LegacyPaneKeyAliasEntry } from '../../../shared/persisted-state-types'
 import type { SpoolRecord } from '../../../shared/agent-hook-spool'
 import { createAgentStatusStore, type AgentStatusStore } from '../../../shared/agent-status-store'
 import { AGENT_STATUS_2A_CURRENT_PRODUCER_MODE } from '../../../shared/agent-status-legacy-adapter'
-import type { AgentStatusStructuredSessionSubject } from '../../../shared/agent-status-subject'
+import type { AgentStatusSubject } from '../../../shared/agent-status-subject'
 import type {
   AgentHookAuthorityEvidence,
   AgentHookProviderSessionIdentity,
@@ -69,10 +74,7 @@ export abstract class AgentHookServerState {
     return this.canonicalStatusStoreInstance
   }
   protected readonly canonicalListingOrder = new Map<string, number>()
-  protected readonly canonicalSubjectsByPane = new Map<
-    string,
-    Map<string, AgentStatusStructuredSessionSubject>
-  >()
+  protected readonly canonicalSubjectsByPane = new Map<string, Map<string, AgentStatusSubject>>()
   private statusListingOrder = 0
   protected nextStatusListingOrder = (): number => ++this.statusListingOrder
 
@@ -87,7 +89,11 @@ export abstract class AgentHookServerState {
   // Why: identifies this Orca instance so the server can detect dev vs. prod cross-talk; set at start() from packaged-build knowledge.
   protected env = 'production'
   protected onAgentStatus: ServerAgentStatusListener = null
+  protected localTerminalAgentResolver: ((paneKey: string) => TuiAgent | null) | null = null
   protected onClaudeStatusLine: ServerStatusLineListener = null
+  protected onStartupPromptClaim: ((body: unknown) => boolean | 'pending') | null = null
+  protected clearStartupPromptClaims: (() => void) | null = null
+  protected statusHooksEnabled = true
   protected onPaneStatusCleared: PaneStatusClearListener | null = null
   protected paneStatusClearListeners = new Set<PaneStatusClearListener>()
   protected statusDropListeners = new Set<StatusDropListener>()
@@ -144,7 +150,10 @@ export abstract class AgentHookServerState {
   protected promptSentHashSalt = randomBytes(16).toString('hex')
   protected closedAgentStatusTabIds = new Set<string>()
   protected closedAgentStatusPaneKeys = new Set<string>()
-  protected restartedStatusLaunchTokenHashByPaneKey = new Map<string, string>()
+  protected restartedStatusLaunchTokenHashByPaneKey = new Map<
+    string,
+    { hash: string; allowRetainedOwner?: true }
+  >()
   protected connectionTimestampWatermarkById = new Map<string, number>()
   // Why: survives the row itself. A transport clear deletes the pane's status row on purpose
   // (absence, not completion), but the *age* of the evidence a later replay restates is not a
@@ -159,6 +168,14 @@ export abstract class AgentHookServerState {
   )
 
   protected abstract withdrawReplayObservation(paneKey: string): void
+  protected abstract getTmuxSelectedStatus(
+    paneKey: string
+  ): EnrichedAgentHookEventPayload | undefined
+  protected abstract deleteTmuxSelectedStatus(
+    paneKey: string
+  ): EnrichedAgentHookEventPayload | undefined
+  protected abstract clearTmuxInnerSubjects(paneKey: string): void
+  protected abstract clearTmuxTabSubjects(tabId: string): void
   protected abstract ingestSpoolRecord(record: SpoolRecord): void
   protected abstract emitPaneStatusCleared(clear: AgentStatusClearIpcPayload): void
   protected abstract buildStatusChangeNotification(): {
@@ -179,6 +196,7 @@ export abstract class AgentHookServerState {
       isReplay?: boolean
       hasExplicitPrompt?: boolean
       launchToken?: string
+      retainedLaunchTokenHash?: string
     }
   ): 'accept' | 'restart' | 'suppress'
   protected abstract isClosedAgentStatusTabForPaneKey(paneKey: string): boolean
@@ -255,9 +273,24 @@ export abstract class AgentHookServerState {
     entry: EnrichedAgentHookEventPayload | null | undefined
   ): EnrichedAgentHookEventPayload | null
   protected abstract hasLiveClaimsForPaneKey(paneKey: string): boolean
+  abstract checkAgentPresence(paneKey: string): Promise<AgentProcessVerdict | null>
+  abstract checkAgentPresenceAfterHook(
+    event: AgentHookEventPayload,
+    row: AgentHookEventPayload
+  ): void
+
+  abstract reconcileEndedProcessForPaneKeys(
+    paneKeys: Iterable<string>,
+    options?: { preserveResumeIdentity?: boolean; endedPresence?: AgentProcessPresence }
+  ): number
+
   protected abstract clearPaneState(
     paneKey: string,
-    options?: { emitStatusRowMutation?: boolean }
+    options?: {
+      emitStatusRowMutation?: boolean
+      preserveTmuxInnerSubjects?: boolean
+      statusUnavailable?: true
+    }
   ): void
   protected abstract deleteStatusEntry(
     paneKey: string,

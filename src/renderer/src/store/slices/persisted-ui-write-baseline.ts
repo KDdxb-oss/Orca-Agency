@@ -13,6 +13,7 @@ import type {
 // so the writer diffs against this hydrated baseline and persists only what this client changed.
 export type PersistedUIWriteBaseline = {
   sidebarWidth: number
+  sidebarOpen: boolean
   rightSidebarOpen: boolean
   rightSidebarTab: PersistedUIState['rightSidebarTab']
   rightSidebarExplorerView: PersistedUIState['rightSidebarExplorerView']
@@ -23,6 +24,8 @@ export type PersistedUIWriteBaseline = {
   sortBy: PersistedUIState['sortBy']
   projectOrderBy: PersistedUIState['projectOrderBy']
   showSleepingWorkspaces: boolean
+  workspaceHostScope: PersistedUIState['workspaceHostScope']
+  visibleWorkspaceHostIds: PersistedUIState['visibleWorkspaceHostIds']
   hideDefaultBranchWorkspace: boolean
   hideAutomationGeneratedWorkspaces: boolean
   hideCliCreatedWorkspaces: boolean
@@ -53,6 +56,7 @@ export type PersistedUIWriteBaseline = {
 // this module exists to close (see ui-state-schema-parity.ts for the same lesson).
 const PERSISTED_UI_WRITE_BASELINE_FIELD_SET = {
   sidebarWidth: true,
+  sidebarOpen: true,
   rightSidebarOpen: true,
   rightSidebarTab: true,
   rightSidebarExplorerView: true,
@@ -63,6 +67,8 @@ const PERSISTED_UI_WRITE_BASELINE_FIELD_SET = {
   sortBy: true,
   projectOrderBy: true,
   showSleepingWorkspaces: true,
+  workspaceHostScope: true,
+  visibleWorkspaceHostIds: true,
   hideDefaultBranchWorkspace: true,
   hideAutomationGeneratedWorkspaces: true,
   hideCliCreatedWorkspaces: true,
@@ -90,6 +96,10 @@ export const PERSISTED_UI_WRITE_BASELINE_FIELDS = Object.keys(
   PERSISTED_UI_WRITE_BASELINE_FIELD_SET
 ).filter(isPersistedUIWriteField)
 
+function stringArrayEqual(a: readonly string[], b: readonly string[]): boolean {
+  return a === b || (a.length === b.length && a.every((value, index) => value === b[index]))
+}
+
 export function isPersistedUIWriteField(field: string): field is keyof PersistedUIWriteBaseline {
   return Object.hasOwn(PERSISTED_UI_WRITE_BASELINE_FIELD_SET, field)
 }
@@ -100,6 +110,7 @@ export function capturePersistedUIWriteBaseline(
 ): PersistedUIWriteBaseline {
   return {
     sidebarWidth: mirror.sidebarWidth,
+    sidebarOpen: mirror.sidebarOpen,
     rightSidebarOpen: mirror.rightSidebarOpen,
     rightSidebarTab: mirror.rightSidebarTab,
     rightSidebarExplorerView: mirror.rightSidebarExplorerView,
@@ -110,6 +121,8 @@ export function capturePersistedUIWriteBaseline(
     sortBy: mirror.sortBy,
     projectOrderBy: mirror.projectOrderBy,
     showSleepingWorkspaces: mirror.showSleepingWorkspaces,
+    workspaceHostScope: mirror.workspaceHostScope,
+    visibleWorkspaceHostIds: mirror.visibleWorkspaceHostIds,
     hideDefaultBranchWorkspace: mirror.hideDefaultBranchWorkspace,
     hideAutomationGeneratedWorkspaces: mirror.hideAutomationGeneratedWorkspaces,
     hideCliCreatedWorkspaces: mirror.hideCliCreatedWorkspaces,
@@ -145,6 +158,9 @@ function writeFieldEqual(field: keyof PersistedUIWriteBaseline, a: unknown, b: u
     field === 'sessionsGridHiddenTabIds'
   ) {
     return shallow(a, b)
+  }
+  if (field === 'visibleWorkspaceHostIds') {
+    return a === b || (Array.isArray(a) && Array.isArray(b) && stringArrayEqual(a, b))
   }
   if (
     field === 'explorerDisplayRootByWorktree' ||

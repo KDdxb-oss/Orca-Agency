@@ -125,7 +125,7 @@ export function resolveDashboardCardTerminalInput(
   const protectedPaste = resolveProtectedMultilinePasteOptionsForAgentEvidence({
     isWindowsClient: args.clientPlatform === 'win32',
     hostPlatform,
-    foregroundAgent: state.paneForegroundAgentByPaneKey[args.paneKey]?.agent,
+    foreground: state.paneForegroundAgentByPaneKey[args.paneKey],
     entry: state.agentStatusByPaneKey[args.paneKey]
   })
   return {

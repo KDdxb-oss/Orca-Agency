@@ -25,6 +25,23 @@ function statusEntry(key: string, overrides: Partial<AgentStatusEntry> = {}): Ag
 }
 
 describe('chat sidebar', () => {
+  it('excludes headless Claude history, including remembered snapshots', () => {
+    const state = chatState()
+    state.settings!.chatSidebar = { historySince: 0 }
+    const headless = chatSession('headless', { agent: 'claude', isHeadless: true })
+    const interactive = chatSession('interactive', { agent: 'claude' })
+    expect(
+      buildChatSidebarRows(state, [headless, interactive], 10_000).map((row) => row.sessionKey)
+    ).toEqual([chatSessionKey('local', 'claude', 'interactive')])
+    state.settings!.chatSidebar.sessions = {
+      [chatSessionKey('local', 'claude', 'headless')]: {
+        worktreeId: chatWorktree.id,
+        snapshot: chatSessionSnapshot(headless)
+      }
+    }
+    expect(buildChatSidebarRows(state, [], 10_000)).toEqual([])
+  })
+
   it('uses the newest moved transcript regardless of scan order, before and after its tab closes', () => {
     const state = chatState({ tabsByWorktree: { [chatWorktree.id]: [chatTab('moved')] } })
     state.settings!.chatSidebar = { historySince: 0 }
