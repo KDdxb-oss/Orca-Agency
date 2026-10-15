@@ -14,7 +14,8 @@ export async function buildDaemonSessionClient(outfile: string): Promise<void> {
         import { setAppEnvironment } from './src/shared/app-environment'
         const [op, runtimeDir, sessionId, marker, cwd] = process.argv.slice(2)
         setAppEnvironment({
-          getPath: () => cwd, getAppPath: () => cwd, getVersion: () => 'test', isPackaged: () => true,
+          getPath: () => cwd, getAppPath: () => cwd,
+          getVersion: () => process.env.ORCA_VERSION ?? '0.0.0-orcad', isPackaged: () => true,
           onWillQuit() {}, exit: code => process.exit(code), getAppMetrics: () => []
         })
         const adapter = new DaemonPtyAdapter({
