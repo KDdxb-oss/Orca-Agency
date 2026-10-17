@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { closedChatSidebarPatch } from './chat-sidebar-tab-close'
+import { describe, expect, it, vi } from 'vitest'
+import { captureClosedChatTabCompletion, closedChatSidebarPatch } from './chat-sidebar-tab-close'
 import { chatSidebarPreferencePatch } from '@/components/sidebar/chat-sidebar-identity'
 import { buildChatSidebarRows } from '@/components/sidebar/chat-sidebar-rows'
 import { chatSidebarListItems } from '@/components/sidebar/chat-sidebar-groups'
@@ -10,8 +10,31 @@ import {
   chatTab,
   chatWorktree
 } from '@/components/sidebar/chat-sidebar-test-fixtures'
+import { createTestStore } from '@/store/slices/store-test-helpers'
 
 describe('closed chat sidebar lifecycle', () => {
+  it('marks an idle chat Done only after its tab actually closes', async () => {
+    const store = createTestStore()
+    const state = chatState({ tabsByWorktree: { [chatWorktree.id]: [chatTab('a')] } })
+    state.settings!.chatSidebar = {}
+    store.setState({
+      ...state,
+      updateSettings: async (updates) => {
+        store.setState((current) => ({ settings: { ...current.settings!, ...updates } }))
+      }
+    })
+    const complete = captureClosedChatTabCompletion(store.getState, 'a')
+    expect(complete).toBeTypeOf('function')
+    expect(store.getState().settings?.chatSidebar?.completed).toBeUndefined()
+
+    store.setState({ tabsByWorktree: { [chatWorktree.id]: [] } })
+    complete?.()
+    await vi.waitFor(() =>
+      expect(Object.values(store.getState().settings?.chatSidebar?.completed ?? {})).toEqual([
+        expect.objectContaining({ done: true, closedTabId: 'a' })
+      ])
+    )
+  })
   it('preserves existing history status until the user closes or completes a chat', () => {
     const session = chatSession('session-b')
     const state = chatState()

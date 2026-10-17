@@ -174,22 +174,26 @@ describe('TabGroupSplitLayout', () => {
     const leftPanelProps = asElement(invokeComponent(asElement(leftChild))).props as {
       reserveClosedExplorerToggleSpace: boolean
       reserveCollapsedSidebarHeaderSpace: boolean
+      showWorkspacePaneCloseButton: boolean
     }
     const rightPanelProps = asElement(invokeComponent(asElement(rightChild))).props as {
       reserveClosedExplorerToggleSpace: boolean
       reserveCollapsedSidebarHeaderSpace: boolean
+      showWorkspacePaneCloseButton: boolean
     }
 
     expect(leftPanelProps).toEqual(
       expect.objectContaining({
         reserveClosedExplorerToggleSpace: false,
-        reserveCollapsedSidebarHeaderSpace: true
+        reserveCollapsedSidebarHeaderSpace: true,
+        showWorkspacePaneCloseButton: false
       })
     )
     expect(rightPanelProps).toEqual(
       expect.objectContaining({
         reserveClosedExplorerToggleSpace: true,
-        reserveCollapsedSidebarHeaderSpace: false
+        reserveCollapsedSidebarHeaderSpace: false,
+        showWorkspacePaneCloseButton: true
       })
     )
   })

@@ -252,6 +252,7 @@ describe('AI Vault tab title sync', () => {
           {
             agent,
             sessionId: `${agent}-session`,
+            titleOnly: true,
             transcriptPath: `/sessions/${agent}.jsonl`
           }
         ]

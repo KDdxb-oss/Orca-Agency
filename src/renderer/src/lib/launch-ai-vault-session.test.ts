@@ -6,8 +6,10 @@ const mockQueueTabStartupCommand = vi.fn()
 const mockSetActiveTabType = vi.fn()
 const mockSetTabBarOrder = vi.fn()
 const runtimeMocks = vi.hoisted(() => ({
-  createWebRuntimeSessionTerminal: vi.fn(),
+  createWebRuntimeSessionTerminalWithIdentity: vi.fn(),
   getRuntimeEnvironmentIdForWorktree: vi.fn<() => string | null>(() => null),
+  getExecutionHostIdForWorktree: vi.fn(() => 'local'),
+  updateChatSidebar: vi.fn(),
   isWebRuntimeSessionActive: vi.fn(() => false)
 }))
 
@@ -43,12 +45,17 @@ vi.mock('@/lib/telemetry', () => ({
 }))
 
 vi.mock('@/lib/worktree-runtime-owner', () => ({
-  getRuntimeEnvironmentIdForWorktree: runtimeMocks.getRuntimeEnvironmentIdForWorktree
+  getRuntimeEnvironmentIdForWorktree: runtimeMocks.getRuntimeEnvironmentIdForWorktree,
+  getExecutionHostIdForWorktree: runtimeMocks.getExecutionHostIdForWorktree
 }))
 
 vi.mock('@/runtime/web-runtime-session', () => ({
-  createWebRuntimeSessionTerminal: runtimeMocks.createWebRuntimeSessionTerminal,
+  createWebRuntimeSessionTerminalWithIdentity:
+    runtimeMocks.createWebRuntimeSessionTerminalWithIdentity,
   isWebRuntimeSessionActive: runtimeMocks.isWebRuntimeSessionActive
+}))
+vi.mock('@/components/sidebar/chat-sidebar-preferences', () => ({
+  updateChatSidebar: runtimeMocks.updateChatSidebar
 }))
 
 import { launchAiVaultSessionInNewTab } from './launch-ai-vault-session'
@@ -58,7 +65,12 @@ describe('launchAiVaultSessionInNewTab', () => {
     vi.clearAllMocks()
     runtimeMocks.getRuntimeEnvironmentIdForWorktree.mockReturnValue(null)
     runtimeMocks.isWebRuntimeSessionActive.mockReturnValue(false)
-    runtimeMocks.createWebRuntimeSessionTerminal.mockResolvedValue({ status: 'created' })
+    runtimeMocks.createWebRuntimeSessionTerminalWithIdentity.mockResolvedValue({
+      outcome: { status: 'created' },
+      hostTabId: 'runtime-tab::leaf'
+    })
+    runtimeMocks.getExecutionHostIdForWorktree.mockReturnValue('local')
+    runtimeMocks.updateChatSidebar.mockResolvedValue(undefined)
     mockState.tabsByWorktree = {}
     mockState.openFiles = []
     mockState.browserTabsByWorktree = {}
@@ -92,6 +104,9 @@ describe('launchAiVaultSessionInNewTab', () => {
     expect(mockSetActiveTabType).toHaveBeenCalledExactlyOnceWith('terminal', 'wt-1')
     expect(mockSetTabBarOrder).toHaveBeenCalledWith('wt-1', ['tab-1'])
     expect(result).toEqual({ tabId: 'tab-1', groupId: 'group-1' })
+    expect(runtimeMocks.updateChatSidebar.mock.calls[0]?.[0]({})).toEqual({
+      userResumedTabs: ['["local","tab-1"]']
+    })
   })
 
   it('queues configured resume startup details for agent history resumes', () => {
@@ -147,6 +162,7 @@ describe('launchAiVaultSessionInNewTab', () => {
 
   it('creates runtime-hosted resume terminals through the paired host', async () => {
     runtimeMocks.getRuntimeEnvironmentIdForWorktree.mockReturnValue('env-1')
+    runtimeMocks.getExecutionHostIdForWorktree.mockReturnValue('runtime:env-1')
     runtimeMocks.isWebRuntimeSessionActive.mockReturnValue(true)
 
     const result = launchAiVaultSessionInNewTab({
@@ -165,7 +181,7 @@ describe('launchAiVaultSessionInNewTab', () => {
     })
 
     expect(result.tabId).toBeNull()
-    expect(runtimeMocks.createWebRuntimeSessionTerminal).toHaveBeenCalledWith({
+    expect(runtimeMocks.createWebRuntimeSessionTerminalWithIdentity).toHaveBeenCalledWith({
       worktreeId: 'wt-1',
       environmentId: 'env-1',
       targetGroupId: 'group-1',
@@ -190,5 +206,8 @@ describe('launchAiVaultSessionInNewTab', () => {
       await expect(result.runtimeLaunch).resolves.toEqual({ status: 'created' })
     }
     expect(mockSetActiveTabType).toHaveBeenCalledExactlyOnceWith('terminal', 'wt-1')
+    expect(runtimeMocks.updateChatSidebar.mock.calls[0]?.[0]({})).toEqual({
+      userResumedTabs: ['["runtime:env-1","web-terminal-runtime-tab"]']
+    })
   })
 })

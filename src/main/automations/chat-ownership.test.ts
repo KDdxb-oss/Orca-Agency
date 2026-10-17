@@ -1,15 +1,47 @@
 import { describe, expect, it, vi } from 'vitest'
-import { recordAutomationChatOwnership } from './chat-ownership'
+import {
+  recordAutomationChatOwnership,
+  recordAutomationProviderSessionOwnership
+} from './chat-ownership'
 import { createGlobalSettingsFixture } from '../../shared/global-settings-test-fixture'
 import type { GlobalSettings } from '../../shared/global-settings-types'
-import type { AutomationRun } from '../../shared/automations-types'
+import type { Automation, AutomationRun } from '../../shared/automations-types'
 
 function fixture() {
   let settings = createGlobalSettingsFixture()
+  const automation: Automation = {
+    id: 'automation',
+    name: 'Audit',
+    prompt: 'Audit',
+    precheck: null,
+    agentId: 'codex',
+    projectId: 'project',
+    executionTargetType: 'ssh',
+    executionTargetId: 'host',
+    schedulerOwner: 'remote_host_service',
+    workspaceMode: 'existing',
+    workspaceId: 'workspace',
+    baseBranch: null,
+    reuseSession: false,
+    timezone: 'UTC',
+    rrule: 'FREQ=DAILY',
+    dtstart: 1,
+    enabled: true,
+    nextRunAt: 1,
+    missedRunPolicy: 'run_once_within_grace',
+    missedRunGraceMinutes: 60,
+    createdAt: 1,
+    updatedAt: 1
+  }
   const updateSettings = vi.fn(
     (patch: Partial<GlobalSettings>) => (settings = { ...settings, ...patch })
   )
-  const store = { getSettings: () => settings, updateSettings, listAutomations: () => [] }
+  const store = {
+    getSettings: () => settings,
+    updateSettings,
+    listAutomations: () => [automation],
+    listAutomationRuns: () => [run]
+  }
   const run: AutomationRun = {
     id: 'run',
     automationId: 'automation',
@@ -84,5 +116,15 @@ describe('automation chat origin persistence', () => {
       hiddenFolders: ['Private'],
       automationChats: expect.arrayContaining(['["ssh:host","codex","provider-session"]'])
     })
+  })
+
+  it('tags the provider as soon as its hook arrives, before a final run update', () => {
+    const { store } = fixture()
+    recordAutomationProviderSessionOwnership(store, [
+      { paneKey: 'tab:pane', sessionId: 'provider-session' }
+    ])
+    expect(store.getSettings().chatSidebar?.automationChats).toContain(
+      '["ssh:host","codex","provider-session"]'
+    )
   })
 })

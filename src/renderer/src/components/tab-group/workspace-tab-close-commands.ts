@@ -42,7 +42,7 @@ export function createWorkspaceTabCloseCommands({
   /** `whenEmptied` is captured by the caller when the close is requested, before any prompt. */
   const closeItem = (
     itemId: string,
-    opts?: { whenEmptied?: () => void; skipRunningProcessConfirm?: boolean }
+    opts?: { whenEmptied?: () => void; skipRunningProcessConfirm?: boolean; onClosed?: () => void }
   ) => {
     const item = groupTabs.find((candidate) => candidate.id === itemId)
     if (!item) {
@@ -51,6 +51,7 @@ export function createWorkspaceTabCloseCommands({
     const whenEmptied = opts?.whenEmptied ?? null
     if (item.contentType === 'agent-session') {
       closeUnifiedTab(item.id)
+      opts?.onClosed?.()
       whenEmptied?.()
       return
     }
@@ -59,7 +60,14 @@ export function createWorkspaceTabCloseCommands({
       // empty check has to run on the actual close — never on cancel.
       closeTerminalTab(item.entityId, {
         ...(opts?.skipRunningProcessConfirm ? { skipRunningProcessConfirm: true } : {}),
-        ...(whenEmptied ? { onClosed: whenEmptied } : {})
+        ...(whenEmptied || opts?.onClosed
+          ? {
+              onClosed: () => {
+                opts?.onClosed?.()
+                whenEmptied?.()
+              }
+            }
+          : {})
       })
       return
     }

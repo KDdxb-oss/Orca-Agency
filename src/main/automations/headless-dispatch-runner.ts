@@ -14,6 +14,7 @@ import type {
 } from './headless-dispatch'
 import type { AutomationRunTargetResult } from './run-target-resolution'
 import type { AutomationRunWriter } from './automation-run-writer'
+import { ScheduledLocalAutomationDeferredError } from './local-schedule-gate'
 
 export type HeadlessAutomationDispatchContext = {
   automation: Automation
@@ -22,6 +23,7 @@ export type HeadlessAutomationDispatchContext = {
   dispatcher: HeadlessAutomationDispatcher
   runs: AutomationRunWriter
   runPrecheck: () => Promise<AutomationPrecheckResult | null>
+  canLaunchScheduledLocal?: () => boolean
   markDispatchResult: (result: AutomationDispatchResult) => Promise<AutomationRun>
   watchRun: (run: AutomationRun) => void
 }
@@ -34,8 +36,30 @@ export async function runHeadlessAutomationDispatch(
   ctx: HeadlessAutomationDispatchContext
 ): Promise<AutomationRun> {
   const { automation, run, target, runs } = ctx
-  const precheckResult =
-    run.trigger === 'scheduled' && automation.precheck ? await ctx.runPrecheck() : null
+  let precheckResult: AutomationPrecheckResult | null
+  try {
+    precheckResult =
+      run.trigger === 'scheduled' && automation.precheck ? await ctx.runPrecheck() : null
+  } catch (error) {
+    if (!(error instanceof ScheduledLocalAutomationDeferredError)) {
+      throw error
+    }
+    return runs.updateRun({
+      runId: run.id,
+      status: 'pending',
+      workspaceId: automation.workspaceId,
+      error: null
+    })
+  }
+  if (run.trigger === 'scheduled' && ctx.canLaunchScheduledLocal?.() === false) {
+    return runs.updateRun({
+      runId: run.id,
+      status: 'pending',
+      workspaceId: automation.workspaceId,
+      precheckResult,
+      error: null
+    })
+  }
   if (precheckResult && !didAutomationPrecheckPass(precheckResult)) {
     return runs.updateRun({
       runId: run.id,
@@ -49,6 +73,15 @@ export async function runHeadlessAutomationDispatch(
   try {
     launch = await ctx.dispatcher({ automation, run, target })
   } catch (error) {
+    if (error instanceof ScheduledLocalAutomationDeferredError) {
+      return runs.updateRun({
+        runId: run.id,
+        status: 'pending',
+        workspaceId: automation.workspaceId,
+        precheckResult,
+        error: null
+      })
+    }
     return runs.updateRun({
       runId: run.id,
       status: 'dispatch_failed',

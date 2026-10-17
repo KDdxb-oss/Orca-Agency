@@ -15,6 +15,8 @@ export type AiVaultSessionTitleRequest = {
   agent: AiVaultSessionTitle['agent']
   sessionId: string
   transcriptPath?: string
+  /** Tab decoration may reuse a scanned title; history classification still reads the transcript. */
+  titleOnly?: boolean
 }
 
 export type AiVaultSessionTitlesArgs = {

@@ -151,7 +151,8 @@ export function bindBuildColdRestoreAgentResumeStartup(session: ConnectPanePtySe
         ? { ompResumeFilePath: launchConfig.ompResumeFilePath }
         : {}),
       platform: resumeTarget.platform,
-      shell: resumeTarget.shell
+      shell: resumeTarget.shell,
+      resumeInLaunchCwd: agent === 'codex'
     })
     if (!startupPlan) {
       return null

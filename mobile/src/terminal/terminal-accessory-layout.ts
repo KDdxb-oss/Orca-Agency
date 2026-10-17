@@ -60,6 +60,16 @@ function insertMissingBuiltInIds(
     if (present.has(id)) {
       continue
     }
+    // Why: keep the paired keys together even when a saved layout moved Shift+Tab.
+    if (id === 'shiftArrowLeft') {
+      const shiftTabAt = out.indexOf('shiftTab')
+      if (shiftTabAt !== -1) {
+        out.splice(shiftTabAt, 0, id)
+        present.add(id)
+        inserted.push(id)
+        continue
+      }
+    }
     let insertAt = 0
     for (let j = i - 1; j >= 0; j--) {
       const at = out.indexOf(currentBuiltInIds[j]!)

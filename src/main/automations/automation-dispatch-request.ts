@@ -24,6 +24,7 @@ type DispatchContext = Pick<
   isActive(): boolean
   getRenderer(): AutomationRendererChannel | null
   headlessDispatcher: HeadlessAutomationDispatcher | null
+  localScheduleReady?: (() => boolean) | null
   resolveTarget(automation: Automation): AutomationRunTargetResult
 }
 
@@ -119,7 +120,7 @@ export async function requestAutomationDispatch(
     return refuse(target.error)
   }
   const renderer = ctx.getRenderer()
-  if (renderer) {
+  if (renderer && !ctx.headlessDispatcher) {
     return sendRendererDispatch(
       renderer,
       {
@@ -140,6 +141,10 @@ export async function requestAutomationDispatch(
     automation,
     run,
     target,
+    canLaunchScheduledLocal:
+      automation.executionTargetType === 'local'
+        ? (ctx.localScheduleReady ?? undefined)
+        : undefined,
     dispatcher: (request) => {
       if (readRun().status !== 'dispatching') {
         throw new AutomationDispatchCancelledError('The run changed before its agent could launch.')

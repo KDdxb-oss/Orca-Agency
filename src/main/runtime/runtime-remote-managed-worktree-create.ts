@@ -114,6 +114,7 @@ export async function createRuntimeRemoteManagedWorktree(
         ...(sequencedStartup.viewMode ? { viewMode: sequencedStartup.viewMode } : {}),
         startupCommandDelivery: sequencedStartup.startupCommandDelivery,
         telemetry: sequencedStartup.telemetry,
+        ...(args.automationProvenance ? { deferMobileSessionPublish: true } : {}),
         ...ownerSurfacing(shouldActivate)
       })
       if (args.startupDraftPaste) {

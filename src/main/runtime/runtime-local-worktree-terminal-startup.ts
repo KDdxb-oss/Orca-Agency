@@ -105,6 +105,7 @@ export async function startRuntimeLocalWorktreeTerminals(args: {
         ...(sequencedStartup.viewMode ? { viewMode: sequencedStartup.viewMode } : {}),
         startupCommandDelivery: sequencedStartup.startupCommandDelivery,
         telemetry: sequencedStartup.telemetry,
+        ...(request.automationProvenance ? { deferMobileSessionPublish: true } : {}),
         ...ownerSurfacing(shouldActivate)
       })
       if (args.draftPaste) {

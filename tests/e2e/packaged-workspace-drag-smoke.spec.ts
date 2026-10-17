@@ -77,7 +77,7 @@ async function captureDragLayout(app: ElectronApplication, page: Page, outputPat
   writeFileSync(outputPath, Buffer.from(data, 'base64'))
 }
 
-test('packaged mouse drags swap quadrants and combine same-folder tab bars', async (// oxlint-disable-next-line no-empty-pattern -- Playwright requires a destructured fixture argument.
+test('packaged mouse drags swap quadrants and combine local tab bars', async (// oxlint-disable-next-line no-empty-pattern -- Playwright requires a destructured fixture argument.
 {}, testInfo) => {
   const executablePath = process.env.ORCA_SMOKE_EXECUTABLE
   test.skip(!executablePath, 'Set ORCA_SMOKE_EXECUTABLE to the reviewed package')
@@ -290,31 +290,32 @@ test('packaged mouse drags swap quadrants and combine same-folder tab bars', asy
 
     const sourceTab = pane(ids[3]).locator(`[data-tab-id="${terminalIds[3]}"]`)
     const targetTab = pane(ids[0]).locator(`[data-tab-id="${terminalIds[0]}"]`)
-    const sourceBounds = (await sourceTab.boundingBox())!
-    const targetBounds = (await targetTab.boundingBox())!
-    const rejectedTab = pane(ids[2]).locator('[data-tab-id]').nth(1)
-    await rejectedTab.click()
-    const rejectedStructure = async () => ({
-      order: await pane(ids[2])
-        .locator('[data-tab-id]')
-        .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-tab-id'))),
-      groups: await pane(ids[2])
-        .locator('[data-tab-group-strip-id]')
-        .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-tab-group-strip-id'))),
-      splits: await page.evaluate(() => localStorage.getItem('orca.workspaceSplitGroups.v1'))
-    })
-    const beforeRejection = await rejectedStructure()
-    const rejectedBounds = (await rejectedTab.boundingBox())!
+    const crossFolderTab = pane(ids[2]).locator('[data-tab-id]').nth(1)
+    const crossFolderTabId = (await crossFolderTab.getAttribute('data-tab-id'))!
+    await crossFolderTab.click()
+    const crossFolderBounds = (await crossFolderTab.boundingBox())!
+    let targetBounds = (await targetTab.boundingBox())!
     await dragTo(
       page,
-      { x: rejectedBounds.x + 30, y: rejectedBounds.y + 16 },
+      { x: crossFolderBounds.x + 30, y: crossFolderBounds.y + 16 },
       { x: targetBounds.x + 4, y: targetBounds.y + 16 }
     )
-    await expect(page.locator('[data-workspace-tab-insertion]')).toHaveCount(0)
+    await expect(page.locator('[data-workspace-tab-insertion="0"]')).toBeVisible()
     await page.mouse.up()
-    await expect(rejectedTab).toBeVisible()
-    expect(await rejectedStructure()).toEqual(beforeRejection)
-    await expect(pane(ids[0]).locator('[data-tab-id]')).toHaveCount(1)
+    await expect(pane(ids[0]).locator(`[data-tab-id="${crossFolderTabId}"]`)).toBeVisible()
+    await expect(pane(ids[2]).locator('[data-tab-id]')).toHaveCount(2)
+    await expect(pane(ids[0]).locator('[data-tab-id]')).toHaveCount(2)
+    const afterCrossFolder = await page.evaluate(async () => {
+      await window.api.session.flush()
+      return window.api.session.get()
+    })
+    expect(
+      afterCrossFolder.tabsByWorktree[ids[0]].find((tab) => tab.id === crossFolderTabId)?.startupCwd
+    ).toBe(folders[2])
+    const sourceBounds = (await sourceTab.boundingBox())!
+    targetBounds = (await pane(ids[0])
+      .locator(`[data-tab-id="${crossFolderTabId}"]`)
+      .boundingBox())!
     await dragTo(
       page,
       { x: sourceBounds.x + 30, y: sourceBounds.y + 16 },
@@ -334,23 +335,23 @@ test('packaged mouse drags swap quadrants and combine same-folder tab bars', asy
       return window.api.session.get()
     })
     expect(final.tabsByWorktree[ids[0]].map((tab) => tab.id).sort()).toEqual(
-      [terminalIds[0], terminalIds[3]].sort()
+      [terminalIds[0], crossFolderTabId, terminalIds[3]].sort()
     )
     expect(final.tabsByWorktree[ids[3]] ?? []).toEqual([])
     await targetTab.click()
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
-    await expect(pane(ids[0]).locator('[data-tab-id]')).toHaveCount(2)
+    await expect(pane(ids[0]).locator('[data-tab-id]')).toHaveCount(3)
     expect(
       await pane(ids[0])
         .locator('[data-tab-id]')
         .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-tab-id')))
-    ).toEqual([terminalIds[3], terminalIds[0]])
+    ).toEqual([terminalIds[3], crossFolderTabId, terminalIds[0]])
     expect(
       (await page.evaluate(() => window.api.pty.listSessions())).map((item) => item.id).sort()
     ).toEqual(initialPtyIds)
     await pane(ids[0]).getByRole('button', { name: 'New tab', exact: true }).click()
     await page.getByRole('menuitem', { name: /New Terminal: PowerShell/ }).click()
-    await expect(pane(ids[0]).locator('[data-tab-id]')).toHaveCount(3)
+    await expect(pane(ids[0]).locator('[data-tab-id]')).toHaveCount(4)
     const addedTab = pane(ids[0]).locator('[data-tab-id]').last()
     const addedTabId = (await addedTab.getAttribute('data-tab-id'))!
     await addedTab.click({ button: 'right' })
@@ -371,7 +372,7 @@ test('packaged mouse drags swap quadrants and combine same-folder tab bars', asy
       .map((item) => item.id)
       .sort()
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
-    await expect(pane(ids[0]).locator('[data-tab-id]')).toHaveCount(3)
+    await expect(pane(ids[0]).locator('[data-tab-id]')).toHaveCount(4)
     await expect(pane(ids[0]).locator('.xterm:visible')).toHaveCount(2)
     expect(
       (await page.evaluate(() => window.api.pty.listSessions())).map((item) => item.id).sort()

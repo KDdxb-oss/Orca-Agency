@@ -14,6 +14,7 @@ import {
   type WorkspacePaneRect
 } from './workspace-split/WorkspaceSplitLayoutSlots'
 import { WorkspaceDropPreview } from './workspace-split/WorkspaceDropPreview'
+import { workspaceTouchesWindowEdge } from './workspace-split/workspace-window-edges'
 
 export function TerminalSplitWorkspaceSurfaces({
   controller
@@ -98,6 +99,16 @@ export function TerminalSplitWorkspaceSurfaces({
         isVisible={isVisible}
         isFocused={isVisible && workspace.id === renderedActiveWorktreeId}
         isMultiPane={group !== null && isVisible}
+        reserveLeftWindowChrome={
+          !group ||
+          (workspaceTouchesWindowEdge(group.layout, workspace.id, 'top') &&
+            workspaceTouchesWindowEdge(group.layout, workspace.id, 'left'))
+        }
+        reserveRightWindowChrome={
+          !group ||
+          (workspaceTouchesWindowEdge(group.layout, workspace.id, 'top') &&
+            workspaceTouchesWindowEdge(group.layout, workspace.id, 'right'))
+        }
         hoverEdge={
           hover?.id === workspace.id && !hover.wholeWindow && !hover.placement && !hover.strip
             ? hover.edge

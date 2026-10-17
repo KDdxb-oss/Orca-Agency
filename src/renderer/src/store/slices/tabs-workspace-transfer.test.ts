@@ -54,7 +54,7 @@ describe('moving a live chat out of its workspace', () => {
     })
   })
 
-  it('refuses to combine tabs from different folders', () => {
+  it('combines tabs from different folders while preserving the original execution folder', () => {
     seedStore(store, {
       worktreesByRepo: {
         repo1: [source, target].map((id) =>
@@ -64,11 +64,20 @@ describe('moving a live chat out of its workspace', () => {
     })
     const tab = store.getState().createTab(source)
     const unified = store.getState().unifiedTabsByWorktree[source][0]
-    store.getState().createTab(target)
+    const existing = store.getState().createTab(target)
     const before = store.getState()
-    expect(before.moveTerminalTabToWorkspace(unified.id, target)).toBe(false)
-    expect(store.getState()).toBe(before)
-    expect(store.getState().tabsByWorktree[source][0].id).toBe(tab.id)
+    const targetGroup = before.groupsByWorktree[target][0]
+    expect(
+      before.moveTerminalTabToWorkspace(unified.id, target, { groupId: targetGroup.id, index: 0 })
+    ).toBe(true)
+    const after = store.getState()
+    expect(after.tabsByWorktree[source]).toEqual([])
+    expect(after.tabsByWorktree[target].map((item) => item.id)).toEqual([tab.id, existing.id])
+    expect(after.tabsByWorktree[target][0].startupCwd).toBe('/tmp/source')
+    expect(after.groupsByWorktree[target][0].tabOrder).toEqual([
+      unified.id,
+      before.unifiedTabsByWorktree[target][0].id
+    ])
   })
 
   it('inserts a detached tab into an occupied same-folder bar without replacing sessions', () => {

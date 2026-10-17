@@ -1,5 +1,5 @@
 import type { Store } from '../persistence'
-import type { AutomationRun } from '../../shared/automations-types'
+import { isFinalAutomationRunStatus, type AutomationRun } from '../../shared/automations-types'
 import type { AgentHookProviderSessionIdentity } from '../agent-hooks/server'
 import { toSshExecutionHostId } from '../../shared/execution-host'
 
@@ -42,4 +42,24 @@ export function recordAutomationChatOwnership(
     { chatSidebar: { ...sidebar, automationChats: [...new Set([...existing, ...ids])] } },
     { notifyListeners: true }
   )
+}
+
+/** Hook identity may arrive after dispatch and before the next run write. Tag it immediately. */
+export function recordAutomationProviderSessionOwnership(
+  store: Pick<Store, 'getSettings' | 'updateSettings' | 'listAutomations' | 'listAutomationRuns'>,
+  providers: readonly AgentHookProviderSessionIdentity[]
+): void {
+  if (!providers.length) {
+    return
+  }
+  const byPane = new Map(providers.map((provider) => [provider.paneKey, provider]))
+  for (const run of store.listAutomationRuns()) {
+    if (
+      !isFinalAutomationRunStatus(run.status) &&
+      run.terminalPaneKey &&
+      byPane.has(run.terminalPaneKey)
+    ) {
+      recordAutomationChatOwnership(store, run, [byPane.get(run.terminalPaneKey)!])
+    }
+  }
 }

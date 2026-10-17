@@ -129,9 +129,20 @@ describe('startMainThreadChurnProbe', () => {
       at: expect.any(String),
       pid: process.pid,
       cpuMs: expect.any(Number),
+      eventLoopMetricsAvailable: expect.any(Boolean),
       rssBytes: expect.any(Number),
       spawns: { icacls: { count: 1, blockMsTotal: 40, blockMsMax: 40 } }
     })
+    const report = JSON.parse(line.replace('[main-thread] ', ''))
+    if (report.eventLoopMetricsAvailable) {
+      expect(report.eventLoopActiveMs).toEqual(expect.any(Number))
+      expect(report.eventLoopIdleMs).toEqual(expect.any(Number))
+      expect(report.eventLoopUtilization).toEqual(expect.any(Number))
+    } else {
+      expect(report.eventLoopActiveMs).toBeNull()
+      expect(report.eventLoopIdleMs).toBeNull()
+      expect(report.eventLoopUtilization).toBeNull()
+    }
     expect(line).not.toContain('private')
     expect(writeStartupDiagnosticLineMock).not.toHaveBeenCalled()
   })

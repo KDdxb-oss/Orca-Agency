@@ -32,9 +32,11 @@ function harness(runs: AutomationRun[]) {
   // Runs whose shell is proven alone at its prompt; any other is unproven, as a live agent reads.
   const idleShell = new Set<string>()
   const dead = new Set<string>()
+  const claimed = new Set<string>()
   const retention = createHeadlessRunTerminalRetention({
     listRuns: () => runs.filter((run) => !forgotten.some((gone) => gone.id === run.id)),
     terminalClientUse: (run) => use.get(run.id) ?? 'unused',
+    terminalClaimedByAnotherRun: (run) => claimed.has(run.id),
     runTerminalAlive: (run) => !dead.has(run.id),
     shellAloneAtPrompt: async (run) => idleShell.has(run.id),
     closeRunTerminal: async (run) => {
@@ -45,7 +47,7 @@ function harness(runs: AutomationRun[]) {
       forgotten.push(run)
     }
   })
-  return { retention, closed, forgotten, use, idleShell, dead }
+  return { retention, closed, forgotten, use, idleShell, dead, claimed }
 }
 
 beforeEach(() => {
@@ -57,6 +59,30 @@ afterEach(() => {
 })
 
 describe('headless run terminal retention', () => {
+  it('never closes a reused terminal through older completed run records', async () => {
+    const runs = [0, 1, 2, 3].map((n) => ({
+      ...makeRun(`r${n}`, n, n === 3 ? 'dispatched' : 'completed'),
+      terminalPaneKey: 'shared:pane',
+      terminalPtyId: 'shared-pty'
+    }))
+    const h = harness(runs)
+    await h.retention.sweep()
+    vi.advanceTimersByTime(RUN_TERMINAL_GRACE_MS * 2)
+    await h.retention.sweep()
+    expect(h.closed).toEqual([])
+    expect(h.forgotten.map((run) => run.id)).toEqual(['r2', 'r1', 'r0'])
+  })
+
+  it('protects the previous run while a reused prompt is being accepted', async () => {
+    const previous = makeRun('previous', 0)
+    const h = harness([previous])
+    h.claimed.add('previous')
+    expect(await h.retention.drain()).toBe(0)
+    expect(h.closed).toEqual([])
+    h.claimed.delete('previous')
+    expect(await h.retention.drain()).toBe(1)
+  })
+
   it('closes finished run terminals past the grace period, keeping the newest few viewable', async () => {
     // Six hourly runs of one automation, all finished.
     const runs = [0, 1, 2, 3, 4, 5].map((hour) => makeRun(`r${hour}`, hour * 3_600_000))

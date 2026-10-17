@@ -58,7 +58,8 @@ export function LinkActionPopover<TRequest extends LinkActionRequest>({
 }: LinkActionPopoverProps<TRequest>): React.JSX.Element {
   const openSettingsPage = useAppStore((state) => state.openSettingsPage)
   const openSettingsTarget = useAppStore((state) => state.openSettingsTarget)
-  const copyableDestination = request?.kind === 'url' ? request.destination : ''
+  const copyableDestination =
+    request?.kind === 'url' || request?.kind === 'file' ? request.destination : ''
   const { copyText, status: copyStatus } = useClipboardTextCopyFeedback(copyableDestination)
   const copyInFlightRef = useRef(false)
   const virtualRef = useMemo(
@@ -83,7 +84,12 @@ export function LinkActionPopover<TRequest extends LinkActionRequest>({
   const copyLabel =
     copyStatus === 'copied'
       ? translate('auto.components.terminal.pane.TerminalLinkActionPopover.copied', 'Copied')
-      : translate('auto.components.terminal.pane.TerminalLinkActionPopover.copyLink', 'Copy link')
+      : request?.kind === 'file'
+        ? translate(
+            'auto.components.editor.HtmlDocPreview.copyDocumentPathControl',
+            'Copy file path'
+          )
+        : translate('auto.components.terminal.pane.TerminalLinkActionPopover.copyLink', 'Copy link')
 
   const copyDestination = async (): Promise<void> => {
     if (copyInFlightRef.current) {
@@ -93,18 +99,25 @@ export function LinkActionPopover<TRequest extends LinkActionRequest>({
     try {
       if (await copyText()) {
         toast.success(
-          translate(
-            'auto.components.terminal.pane.TerminalLinkActionPopover.copiedLink',
-            'Copied link'
-          )
+          request?.kind === 'file'
+            ? translate(
+                'auto.components.github.project.GhAuthErrorHelp.224c9d0ae8',
+                'Copied to clipboard'
+              )
+            : translate(
+                'auto.components.terminal.pane.TerminalLinkActionPopover.copiedLink',
+                'Copied link'
+              )
         )
         return
       }
       toast.error(
-        translate(
-          'auto.components.terminal.pane.TerminalLinkActionPopover.copyLinkFailed',
-          'Failed to copy link'
-        )
+        request?.kind === 'file'
+          ? translate('auto.components.github.project.GhAuthErrorHelp.8a7f6bf5dc', 'Failed to copy')
+          : translate(
+              'auto.components.terminal.pane.TerminalLinkActionPopover.copyLinkFailed',
+              'Failed to copy link'
+            )
       )
     } finally {
       copyInFlightRef.current = false
@@ -148,7 +161,7 @@ export function LinkActionPopover<TRequest extends LinkActionRequest>({
             >
               {request.destination}
             </span>
-            {request.kind === 'url' ? (
+            {request.kind === 'url' || request.kind === 'file' ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button

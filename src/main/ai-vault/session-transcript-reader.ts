@@ -62,6 +62,7 @@ export async function readResumableTranscript(args: {
   resume: SessionParseResumePoint | null
   stateFactory: (messages: TranscriptMessageChannel) => ResumableSessionParseState
   stats?: TranscriptReadStats
+  signal?: AbortSignal
 }): Promise<ResumableTranscriptRead> {
   const { file } = args.candidate
   const resume = args.resume
@@ -108,7 +109,8 @@ export async function readResumableTranscript(args: {
       // Bound: the optional hooks are declared as methods, so a parser written
       // with method syntax must not lose `this` on the way into the reader.
       onLineBytes: state.consumeLineBytes?.bind(state),
-      shouldStop: state.shouldStop?.bind(state)
+      shouldStop: state.shouldStop?.bind(state),
+      signal: args.signal
     })
     if (args.stats) {
       args.stats.bytesRead += readResult.bytesRead

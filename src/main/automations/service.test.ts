@@ -93,6 +93,51 @@ describe('AutomationService', () => {
     )
   })
 
+  it('persists a deferred local occurrence through restart and runs it after the normal grace', async () => {
+    vi.setSystemTime(new Date('2026-05-13T08:59:00'))
+    const store = await createStore()
+    store.addRepo(makeRepo())
+    const automation = store.createAutomation({
+      name: 'Quiet check',
+      prompt: 'Check the repo',
+      agentId: 'codex',
+      projectId: 'r1',
+      workspaceMode: 'existing',
+      workspaceId: 'wt1',
+      timezone: 'UTC',
+      rrule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0',
+      dtstart: new Date('2026-05-12T00:00:00').getTime()
+    })
+    vi.setSystemTime(new Date('2026-05-13T09:01:00'))
+    let ready = false
+    const localScheduleReady = vi.fn(() => ready)
+    const send = vi.fn()
+    const service = new AutomationService(store, {
+      tickMs: 60_000,
+      localScheduleReady
+    })
+    service.setWebContents({ isDestroyed: () => false, send } as never)
+    service.start()
+    service.setRendererReady()
+    await vi.waitFor(() => expect(localScheduleReady).toHaveBeenCalled())
+    await vi.waitFor(() => expect(store.listAutomationRuns(automation.id)).toHaveLength(1))
+    expect(store.listAutomationRuns(automation.id)[0]?.status).toBe('pending')
+    expect(send).not.toHaveBeenCalled()
+    service.stop()
+    vi.setSystemTime(new Date('2026-05-13T12:01:00'))
+    ready = true
+    const resumed = new AutomationService(store, { tickMs: 60_000, localScheduleReady })
+    resumed.setWebContents({ isDestroyed: () => false, send } as never)
+    resumed.start()
+    resumed.setRendererReady()
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+    expect(store.listAutomationRuns(automation.id)).toHaveLength(1)
+    expect(store.listAutomationRuns(automation.id)[0]?.scheduledFor).toBe(
+      new Date('2026-05-13T09:00:00').getTime()
+    )
+    resumed.stop()
+  })
+
   it('returns the persisted status for manual runs after dispatch is requested', async () => {
     vi.setSystemTime(new Date('2026-05-13T08:00:00Z'))
     const store = await createStore()

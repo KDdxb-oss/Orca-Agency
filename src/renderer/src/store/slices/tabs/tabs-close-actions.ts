@@ -20,6 +20,7 @@ import {
   structuredAgentSessionFocusOwner,
   structuredAgentSessionTargetForTab
 } from '@/runtime/structured-agent-session-owner'
+import { collapseEmptyWorkspaceSplit } from '@/lib/collapse-empty-workspace-split'
 
 export function createTabsCloseActions(
   set: TabsSliceSet,
@@ -193,6 +194,10 @@ export function createTabsCloseActions(
             : {})
         }
       })
+
+      if (!opts?.preserveWorktreeSelection) {
+        collapseEmptyWorkspaceSplit(get(), worktreeId)
+      }
 
       if (opts?.recordInteraction !== false) {
         get().recordFeatureInteraction?.('terminal-tabs')

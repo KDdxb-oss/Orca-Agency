@@ -123,7 +123,8 @@ export function codexRestartResumeStartup(
   }
   const plan = buildAgentResumeStartupPlan({
     ...launchArgs,
-    providerSession
+    providerSession,
+    resumeInLaunchCwd: true
   })
   if (!plan) {
     return fallback

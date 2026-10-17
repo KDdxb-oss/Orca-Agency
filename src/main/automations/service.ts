@@ -27,8 +27,6 @@ import { createAutomationRunWriter, type AutomationRunWriter } from './automatio
 import { reportAutomationScheduleDrift } from './schedule-drift-report'
 import {
   describeScheduledRefusal,
-  missedBeyondGrace,
-  recordMissedRun,
   recordRefusedAutomationRun,
   recordUnevaluableAutomation
 } from './dispatch-refusal'
@@ -36,6 +34,7 @@ import type {
   AutomationsChangedPayload,
   PublishAutomationsChanged
 } from '../../shared/runtime-client-events'
+import { prepareScheduledAutomation } from './local-schedule-gate'
 
 const DEFAULT_TICK_MS = 60 * 1000
 
@@ -52,6 +51,7 @@ export class AutomationService {
   private readonly codexUsage: CodexUsageStore | null
   private readonly allowRemoteHostScheduling: boolean
   private readonly headlessDispatcher: HeadlessAutomationDispatcher | null
+  private readonly localScheduleReady: (() => boolean) | null
   /** Set on a headless host: closes completed, unused run terminals now; resolves how many. */
   releaseFinishedRunTerminals: (() => Promise<number>) | null = null
   private readonly publish: PublishAutomationsChanged | null
@@ -70,6 +70,8 @@ export class AutomationService {
       codexUsage?: CodexUsageStore
       allowRemoteHostScheduling?: boolean
       headlessDispatcher?: HeadlessAutomationDispatcher
+      /** Desktop-only resource gate; manual Run now remains an explicit user action. */
+      localScheduleReady?: () => boolean
       terminalObserver?: AutomationRunTerminalObserver
       onAutomationsChanged?: PublishAutomationsChanged
     } = {}
@@ -80,6 +82,7 @@ export class AutomationService {
     this.codexUsage = opts.codexUsage ?? null
     this.allowRemoteHostScheduling = opts.allowRemoteHostScheduling ?? false
     this.headlessDispatcher = opts.headlessDispatcher ?? null
+    this.localScheduleReady = opts.localScheduleReady ?? null
     this.publish = opts.onAutomationsChanged ?? null
     this.runs = createAutomationRunWriter(store, this.publish)
     this.completionWatcher = opts.terminalObserver
@@ -196,6 +199,7 @@ export class AutomationService {
     }
     return await runAutomationPrecheck({
       precheck: automation.precheck,
+      shouldContinue: this.localScheduleReady ?? undefined,
       target:
         automation.executionTargetType === 'ssh'
           ? { type: 'ssh', cwd: target.cwd, connectionId: automation.executionTargetId }
@@ -266,14 +270,15 @@ export class AutomationService {
 
   private async evaluateAutomation(automation: Automation, now: number): Promise<void> {
     const generation = this.dispatchGeneration
-    const scheduledFor = this.store.getLatestAutomationOccurrence(automation, now)
+    const scheduledFor = await prepareScheduledAutomation({
+      automation,
+      store: this.store,
+      runs: this.runs,
+      ready: this.localScheduleReady,
+      now,
+      tickMs: this.tickMs
+    })
     if (scheduledFor === null) {
-      await this.runs.advanceNextRun(automation.id, now)
-      return
-    }
-    if (missedBeyondGrace({ automation, scheduledFor, now, tickMs: this.tickMs })) {
-      await recordMissedRun({ runs: this.runs, automation, scheduledFor })
-      await this.runs.advanceNextRun(automation.id, now)
       return
     }
 
@@ -288,13 +293,15 @@ export class AutomationService {
       return
     }
 
-    await this.requestDispatch(
+    const run = await this.requestDispatch(
       automation,
       await this.runs.createRun(automation, scheduledFor),
       target,
       generation
     )
-    await this.runs.advanceNextRun(automation.id, now)
+    if (run.status !== 'pending') {
+      await this.runs.advanceNextRun(automation.id, now)
+    }
   }
 
   private resolveTarget(automation: Automation): AutomationRunTargetResult {
@@ -321,6 +328,7 @@ export class AutomationService {
         isActive: () => !this.stopped && generation === this.dispatchGeneration,
         getRenderer: () => (this.canDispatchToRenderer() ? this.webContents : null),
         headlessDispatcher: this.headlessDispatcher,
+        localScheduleReady: this.localScheduleReady,
         resolveTarget: (current) => this.resolveTarget(current),
         runPrecheck: () => this.runPrecheck(automation.id, run.id),
         markDispatchResult: (result) => this.markDispatchResult(result),

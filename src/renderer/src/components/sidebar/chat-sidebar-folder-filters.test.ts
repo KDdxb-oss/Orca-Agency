@@ -25,6 +25,43 @@ function items(settings: ChatSidebarSettings, query = '', collapsed = new Set<st
 }
 
 describe('chat sidebar folder filters', () => {
+  it('keeps a registered folder visible when Hide Done leaves no chat rows', () => {
+    const state = chatState({
+      projectGroups: [
+        {
+          id: 'example',
+          name: 'Example',
+          parentPath: '/clients/Example',
+          parentGroupId: null,
+          createdFrom: 'manual',
+          tabOrder: 0,
+          isCollapsed: false,
+          color: null,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    state.settings!.chatSidebar = { groupBy: 'folder', showOnlyInProgress: true }
+    const done = chatRow({ id: 'done-example', folder: 'Example', completed: true, tabId: null })
+    expect(chatSidebarListItems([done], state, '')).toMatchObject([
+      { kind: 'heading', id: 'chat:folder:Example', label: 'Example (0)' }
+    ])
+    expect(chatSidebarListItems([], state, '')).toMatchObject([
+      { kind: 'heading', id: 'chat:folder:Example', label: 'Example (0)' }
+    ])
+    state.settings!.chatSidebar = { groupBy: 'folder', showOnlyOpenChats: true }
+    expect(chatSidebarListItems([], state, '')).toEqual([])
+    state.settings!.chatSidebar = {
+      groupBy: 'folder',
+      showOnlyOpenChats: true,
+      showOnlyInProgress: true
+    }
+    expect(chatSidebarListItems([], state, '')).toMatchObject([
+      { kind: 'heading', id: 'chat:folder:Example', label: 'Example (0)' }
+    ])
+  })
+
   it('does not expand a folder for an unprompted working startup snapshot', () => {
     const state = chatState()
     state.settings!.chatSidebar = { groupBy: 'folder', collapseDoneFolders: true }

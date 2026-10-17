@@ -5,6 +5,7 @@ import { makePaneKey } from '../../../shared/stable-pane-id'
 import type { ProjectExecutionRuntimeResolution } from '../../../shared/project-execution-runtime'
 import type * as localPreflightContext from '@/lib/local-preflight-context'
 import { buildCodexAccountRestartStartup } from './codex-account-restart-startup'
+import { chatState, chatTab, chatWorktree } from '@/components/sidebar/chat-sidebar-test-fixtures'
 
 let projectRuntimeContext: ProjectExecutionRuntimeResolution | undefined
 
@@ -104,6 +105,58 @@ describe('buildCodexAccountRestartStartup', () => {
 
     expect(startup.command).toContain(SESSION_ID)
     expect(startup.resumeProviderSession?.id).toBe(SESSION_ID)
+  })
+
+  it('resumes a restored tab from its saved transcript when pane status is gone', () => {
+    const previous = useAppStore.getState()
+    const snapshot = {
+      executionHostId: 'local' as const,
+      agent: 'codex' as const,
+      sessionId: SESSION_ID,
+      filePath: `/home/user/.codex/sessions/2026/10/01/rollout-${SESSION_ID}.jsonl`,
+      codexHome: '/home/user/.codex',
+      cwd: '/clients/Acme',
+      title: 'Restored conversation',
+      createdAt: '2026-10-01T00:00:00Z',
+      updatedAt: null,
+      modifiedAt: '2026-10-01T01:00:00Z'
+    }
+    const fixture = chatState()
+    useAppStore.setState({
+      repos: fixture.repos,
+      worktreesByRepo: { repo: [{ ...chatWorktree, id: WORKTREE_ID }] },
+      tabsByWorktree: {
+        [WORKTREE_ID]: [
+          chatTab(TAB_ID, {
+            worktreeId: WORKTREE_ID,
+            aiVaultTitle: { agent: 'codex', sessionId: SESSION_ID, title: snapshot.title }
+          })
+        ]
+      },
+      settings: {
+        ...previous.settings!,
+        chatSidebar: {
+          sessions: {
+            [JSON.stringify(['local', 'codex', SESSION_ID])]: {
+              worktreeId: WORKTREE_ID,
+              snapshot
+            }
+          }
+        }
+      }
+    })
+    try {
+      const startup = build()
+      expect(startup.command).toContain(`'resume' '${SESSION_ID}'`)
+      expect(startup.resumeProviderSession?.id).toBe(SESSION_ID)
+    } finally {
+      useAppStore.setState({
+        repos: previous.repos,
+        worktreesByRepo: previous.worktreesByRepo,
+        tabsByWorktree: previous.tabsByWorktree,
+        settings: previous.settings
+      })
+    }
   })
 
   it('keeps the bare relaunch for a resolved WSL runtime', () => {

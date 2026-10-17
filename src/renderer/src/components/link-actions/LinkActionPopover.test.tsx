@@ -254,20 +254,32 @@ describe('LinkActionPopover', () => {
     await waitFor(() => expect(mocks.writeClipboardText).toHaveBeenCalledTimes(2))
   })
 
-  it('does not offer copy link for non-URL destinations', () => {
+  it('copies a file destination beside settings without closing the popover', async () => {
     vi.stubGlobal('navigator', { userAgent: 'Macintosh' })
+    Object.assign(window, { api: { ui: { writeClipboardText: mocks.writeClipboardText } } })
+    mocks.writeClipboardText.mockResolvedValue(undefined)
+    const onClose = vi.fn()
     const request: LinkActionRequest = {
       anchorX: 100,
       anchorY: 200,
-      destination: '/tmp/example.ts',
+      destination: 'C:\\Users\\demo\\dev\\project\\example.ts',
       kind: 'file',
       primary: { label: 'Open file', run: vi.fn() },
       restoreFocus: vi.fn()
     }
 
-    render(<LinkActionPopover request={request} onClose={vi.fn()} />)
+    render(<LinkActionPopover request={request} onClose={onClose} />)
 
     expect(screen.queryByRole('button', { name: 'Copy link' })).toBeNull()
+    const copyButton = screen.getByRole('button', { name: 'Copy file path' })
+    const settingsButton = screen.getByRole('button', { name: 'Terminal link settings' })
+    expect(
+      copyButton.compareDocumentPosition(settingsButton) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    fireEvent.click(copyButton)
+    await waitFor(() => expect(mocks.writeClipboardText).toHaveBeenCalledWith(request.destination))
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('Copied to clipboard')
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('opens the terminal link setting from the compact settings button', () => {

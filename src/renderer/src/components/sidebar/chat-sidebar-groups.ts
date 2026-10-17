@@ -3,7 +3,7 @@ import {
   type ChatSidebarRow,
   type ChatSidebarState
 } from './chat-sidebar-types'
-import { hiddenChatFolderLabels } from './chat-creation-folders'
+import { chatCreationFolders, hiddenChatFolderLabels } from './chat-creation-folders'
 import { chatSidebarSplitGroups, type FocusedChatWorkspace } from './chat-sidebar-split-groups'
 import type { WorkspaceSplitGroup } from '@/lib/workspace-split-layout'
 import { chatSidebarPaneGroups, type ChatPaneLayout } from './chat-sidebar-pane-groups'
@@ -45,6 +45,7 @@ export function chatSidebarListItems(
 ): ChatSidebarListItem[] {
   const settings = state.settings?.chatSidebar
   const groupBy = settings?.groupBy ?? 'status'
+  const keepEmptyFolders = !settings?.showOnlyOpenChats || settings.showOnlyInProgress === true
   const text = query.trim().toLocaleLowerCase()
   const hiddenFolders = hiddenChatFolderLabels(settings?.hiddenFolders, state.projectGroups)
   const matches = (row: ChatSidebarRow) =>
@@ -56,6 +57,7 @@ export function chatSidebarListItems(
       folderCompletion.set(row.folder, (folderCompletion.get(row.folder) ?? true) && row.completed)
     }
   }
+  const registeredFolders = chatCreationFolders(state.projectGroups).map((folder) => folder.name)
   for (const row of rows) {
     if (
       row.automated ||
@@ -93,14 +95,21 @@ export function chatSidebarListItems(
       tabs.find((tab) => tab.id === row.tabId)?.createdAt ??
       row.createdAt ??
       (Date.parse(row.session?.createdAt ?? '') || Number.MAX_SAFE_INTEGER)
-    const members = [...siblings].sort(
-      (a, b) =>
+    const members = [...siblings].sort((a, b) => {
+      const aOrder = order.get(a.tabId ?? '')
+      const bOrder = order.get(b.tabId ?? '')
+      if (aOrder !== undefined || bOrder !== undefined) {
+        const difference = (aOrder ?? Number.MAX_SAFE_INTEGER) - (bOrder ?? Number.MAX_SAFE_INTEGER)
+        if (difference !== 0) {
+          return difference
+        }
+      }
+      return (
         Number(b.ownsWorkspaceName) - Number(a.ownsWorkspaceName) ||
         createdAt(a) - createdAt(b) ||
-        (order.get(a.tabId ?? '') ?? Number.MAX_SAFE_INTEGER) -
-          (order.get(b.tabId ?? '') ?? Number.MAX_SAFE_INTEGER) ||
         a.id.localeCompare(b.id)
-    )
+      )
+    })
     return { id, members }
   })
   const joined = chatSidebarSplitGroups(
@@ -134,7 +143,13 @@ export function chatSidebarListItems(
         ? [
             ...new Set([
               ...sections.keys(),
-              ...[...folderCompletion.keys()].filter(
+              ...(keepEmptyFolders ? [...folderCompletion.keys()] : []).filter(
+                (folder) =>
+                  !hiddenFolders.includes(folder) &&
+                  !visibleFolders.has(folder) &&
+                  (!text || folder.toLocaleLowerCase().includes(text))
+              ),
+              ...(keepEmptyFolders ? registeredFolders : []).filter(
                 (folder) =>
                   !hiddenFolders.includes(folder) &&
                   !visibleFolders.has(folder) &&
@@ -145,7 +160,12 @@ export function chatSidebarListItems(
         : [...sections.keys()]
   return keys.flatMap((key): ChatSidebarListItem[] => {
     const section = sections.get(key) ?? []
-    if (!section.length && (groupBy !== 'folder' || !folderCompletion.has(key))) {
+    if (
+      !section.length &&
+      (groupBy !== 'folder' ||
+        !keepEmptyFolders ||
+        (!folderCompletion.has(key) && !registeredFolders.includes(key)))
+    ) {
       return []
     }
     const headingId = `chat:${groupBy}:${key}`

@@ -149,18 +149,23 @@ export function codexHomeFromTranscript(transcriptPath: string): string | null {
  * Codex's home is where its rollout lives; Claude's folder must be the bucket its transcript is in.
  */
 export function chatLiveSessionSnapshot(
-  row: Pick<ChatSidebarRow, 'hostId' | 'worktree' | 'timestamp' | 'liveSession' | 'sessionKey'>,
+  row: Pick<
+    ChatSidebarRow,
+    'hostId' | 'worktree' | 'folderWorktree' | 'timestamp' | 'liveSession' | 'sessionKey'
+  >,
   now: number
 ): ChatSidebarSessionSnapshot | null {
   const live = row.liveSession
   if (!live || chatSessionKey(row.hostId, live.agent, live.sessionId) !== row.sessionKey) {
     return null
   }
+  // A tab can move to another pane without moving the project that owns its conversation.
+  const sessionFolder = row.folderWorktree ?? row.worktree
   const codexHome = live.agent === 'codex' ? codexHomeFromTranscript(live.transcriptPath) : null
   if (
     (live.agent === 'codex' && !codexHome) ||
     (live.agent === 'claude' &&
-      !isClaudeTranscriptInProjectBucket(live.transcriptPath, row.worktree.path))
+      !isClaudeTranscriptInProjectBucket(live.transcriptPath, sessionFolder.path))
   ) {
     return null
   }
@@ -170,7 +175,7 @@ export function chatLiveSessionSnapshot(
     agent: live.agent,
     sessionId: live.sessionId,
     title: live.title,
-    cwd: row.worktree.path,
+    cwd: sessionFolder.path,
     filePath: live.transcriptPath,
     codexHome,
     createdAt: null,

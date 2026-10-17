@@ -24,6 +24,8 @@ export type HeadlessRunTerminalRetentionDeps = {
    * a used terminal is the user's now; `unknown` keeps it too.
    */
   terminalClientUse: (run: AutomationRun) => 'used' | 'unused' | 'unknown'
+  /** A newer run has claimed this pane while its prompt or terminal record is still in flight. */
+  terminalClaimedByAnotherRun?: (run: AutomationRun) => boolean
   /** Whether the run's pane still holds the run's own PTY; a dead or replaced one is forgotten. */
   runTerminalAlive: (run: AutomationRun) => boolean
   /** Fresh proof that only the shell runs in the run's PTY, at its prompt; false when unproven. */
@@ -83,8 +85,20 @@ export function createHeadlessRunTerminalRetention(deps: HeadlessRunTerminalRete
     }
     for (const runs of byAutomation.values()) {
       let kept = 0
+      const seenTerminals = new Set<string>()
       for (const run of runs.toSorted((a, b) => runRecency(b) - runRecency(a))) {
         try {
+          if (deps.terminalClaimedByAnotherRun?.(run)) {
+            continue
+          }
+          const terminalKey = `${run.terminalPaneKey}:${run.terminalPtyId ?? ''}`
+          if (seenTerminals.has(terminalKey)) {
+            if (isFinalAutomationRunStatus(run.status)) {
+              await forget(run)
+            }
+            continue
+          }
+          seenTerminals.add(terminalKey)
           // A terminal already gone holds no keep slot; only live ones stay viewable.
           if (!deps.runTerminalAlive(run)) {
             if (isFinalAutomationRunStatus(run.status)) {
@@ -97,6 +111,9 @@ export function createHeadlessRunTerminalRetention(deps: HeadlessRunTerminalRete
             continue
           }
           if (!(await mayClose(run, policy.graceMs))) {
+            continue
+          }
+          if (deps.terminalClaimedByAnotherRun?.(run)) {
             continue
           }
           if (await deps.closeRunTerminal(run)) {

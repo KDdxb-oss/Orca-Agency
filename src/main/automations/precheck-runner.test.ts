@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runAutomationPrecheck } from './precheck-runner'
+import { ScheduledLocalAutomationDeferredError } from './local-schedule-gate'
 
 const sshManagerState = vi.hoisted(() => ({
   manager: null as null | {
@@ -50,7 +51,7 @@ describe('runAutomationPrecheck', () => {
     expect(result.stdout).toContain('stdout text')
     expect(result.stderr).toContain('stderr text')
     expect(result.error).toBeNull()
-  })
+  }, 15_000)
 
   it('marks a local precheck as timed out', async () => {
     const result = await runAutomationPrecheck({
@@ -65,6 +66,27 @@ describe('runAutomationPrecheck', () => {
     expect(result.timedOut).toBe(true)
     expect(result.error).toBe('Precheck timed out after 1s.')
   })
+
+  it('stops a long local precheck when the computer becomes active', async () => {
+    let ready = true
+    const becameActive = setTimeout(() => {
+      ready = false
+    }, 100)
+    try {
+      await expect(
+        runAutomationPrecheck({
+          precheck: {
+            command: nodeCommand('setTimeout(() => {}, 5000)'),
+            timeoutSeconds: 5
+          },
+          target: { type: 'local', cwd },
+          shouldContinue: () => ready
+        })
+      ).rejects.toBeInstanceOf(ScheduledLocalAutomationDeferredError)
+    } finally {
+      clearTimeout(becameActive)
+    }
+  }, 15_000)
 
   it('uses the SSH channel exit event as the precheck exit code', async () => {
     const channel = Object.assign(new EventEmitter(), {

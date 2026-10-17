@@ -5,7 +5,6 @@ import { buildActiveSurfacePatch } from './tabs-surface'
 import { parsePaneKey } from '../../../../../shared/stable-pane-id'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { moveParkedTerminalTabWorkspace } from '@/components/terminal-pane/terminal-parked-watcher-registry'
-import { normalizeRuntimePathForComparison } from '../../../../../shared/cross-platform-path'
 import { getConnectionIdFromState } from '@/lib/connection-owner-resolution'
 import { applyTabOrderSortValues } from './tabs-tab-order'
 
@@ -42,10 +41,7 @@ export function createTabsWorkspaceTransferActions(
           !targetGroup ||
           getConnectionIdFromState(state, sourceId) !== null ||
           getConnectionIdFromState(state, destinationId) !== null ||
-          (tab.executionHostId && tab.executionHostId !== 'local') ||
-          ((state.unifiedTabsByWorktree[destinationId]?.length ?? 0) > 0 &&
-            normalizeRuntimePathForComparison(source.path) !==
-              normalizeRuntimePathForComparison(destination.path))
+          (tab.executionHostId && tab.executionHostId !== 'local')
         ) {
           return state
         }

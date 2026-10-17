@@ -5,6 +5,7 @@ import { MAX_AUTOMATION_PRECHECK_OUTPUT_CHARS } from '../../shared/automation-pr
 import { getSshConnectionManager } from '../ssh/ssh-target-registry'
 import { shellEscape } from '../ssh/ssh-connection-utils'
 import { admitSelfInitiatedTreeKill } from '../own-chromium-tree-kill-guard'
+import { ScheduledLocalAutomationDeferredError } from './local-schedule-gate'
 
 type AutomationPrecheckExecutionTarget =
   | {
@@ -131,17 +132,23 @@ export function killLocalPrecheckProcessTree(
 
 function runLocalPrecheck(
   precheck: AutomationPrecheck,
-  target: Extract<AutomationPrecheckExecutionTarget, { type: 'local' }>
+  target: Extract<AutomationPrecheckExecutionTarget, { type: 'local' }>,
+  shouldContinue?: () => boolean
 ): Promise<AutomationPrecheckResult> {
+  if (shouldContinue?.() === false) {
+    return Promise.reject(new ScheduledLocalAutomationDeferredError())
+  }
   const startedAt = Date.now()
   const timeoutMs = precheck.timeoutSeconds * 1000
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let stdout: TailBuffer = { content: '', truncated: false }
     let stderr: TailBuffer = { content: '', truncated: false }
     let timedOut = false
+    let deferred = false
     let settled = false
     let timeout: ReturnType<typeof setTimeout> | null = null
     let forceKillTimer: ReturnType<typeof setTimeout> | null = null
+    let activityCheck: ReturnType<typeof setInterval> | null = null
 
     const child = spawn(precheck.command, {
       cwd: target.cwd,
@@ -160,19 +167,44 @@ function runLocalPrecheck(
         clearTimeout(timeout)
         timeout = null
       }
+      if (activityCheck) {
+        clearInterval(activityCheck)
+        activityCheck = null
+      }
       if (forceKillTimer) {
         clearTimeout(forceKillTimer)
         forceKillTimer = null
       }
-      resolve(
-        createPrecheckResult({ precheck, startedAt, stdout, stderr, exitCode, timedOut, error })
-      )
+      if (deferred) {
+        reject(new ScheduledLocalAutomationDeferredError())
+      } else {
+        resolve(
+          createPrecheckResult({ precheck, startedAt, stdout, stderr, exitCode, timedOut, error })
+        )
+      }
     }
 
     timeout = setTimeout(() => {
+      if (settled || deferred) {
+        return
+      }
       timedOut = true
       forceKillTimer = killLocalPrecheckProcessTree(child)
     }, timeoutMs)
+    if (shouldContinue) {
+      activityCheck = setInterval(() => {
+        if (settled || deferred || timedOut || shouldContinue() !== false) {
+          return
+        }
+        deferred = true
+        if (activityCheck) {
+          clearInterval(activityCheck)
+          activityCheck = null
+        }
+        forceKillTimer = killLocalPrecheckProcessTree(child)
+      }, 1000)
+      activityCheck.unref?.()
+    }
 
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
@@ -277,9 +309,10 @@ async function runSshPrecheck(
 export async function runAutomationPrecheck(args: {
   precheck: AutomationPrecheck
   target: AutomationPrecheckExecutionTarget
+  shouldContinue?: () => boolean
 }): Promise<AutomationPrecheckResult> {
   if (args.target.type === 'ssh') {
     return await runSshPrecheck(args.precheck, args.target)
   }
-  return await runLocalPrecheck(args.precheck, args.target)
+  return await runLocalPrecheck(args.precheck, args.target, args.shouldContinue)
 }

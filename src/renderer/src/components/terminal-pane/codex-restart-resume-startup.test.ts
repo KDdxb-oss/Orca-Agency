@@ -79,7 +79,7 @@ describe('Codex restart resumes its own conversation', () => {
     source.settings!.agentDefaultArgs = { codex: '--model current-model' }
     const startup = codexRestartResumeStartup(source, chatWorktree.id, 'a', leafId)
     expect(startup.command).toBe(
-      "current-codex '--model' 'current-model' '--cd' '.' 'resume' 'exact-session'"
+      "current-codex '--model' 'current-model' '--cd' '.' '-c' 'tui.resume_cwd=current' 'resume' 'exact-session'"
     )
     expect(startup.resumeProviderSession).toEqual({ key: 'session_id', id: 'exact-session' })
     expect(source.agentStatusByPaneKey[paneKey].state).toBe('done')

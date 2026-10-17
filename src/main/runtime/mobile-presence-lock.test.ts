@@ -139,6 +139,17 @@ describe('mobile presence lock — driver state machine', () => {
     expect(runtime.getDriver('pty-1')).toEqual({ kind: 'idle' })
   })
 
+  it('reports a visible mobile terminal while the phone is subscribed', async () => {
+    const { runtime } = createRuntime()
+    expect(runtime.hasMobileTerminalSubscribers()).toBe(false)
+
+    await runtime.handleMobileSubscribe('pty-1', 'phone-A', { cols: 45, rows: 20 })
+    expect(runtime.hasMobileTerminalSubscribers()).toBe(true)
+
+    runtime.handleMobileUnsubscribe('pty-1', 'phone-A')
+    expect(runtime.hasMobileTerminalSubscribers()).toBe(false)
+  })
+
   it('stops a preview paste when mobile claims the floor between chunks', async () => {
     const { runtime, writes } = createRuntime()
     let driverChecks = 0

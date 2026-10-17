@@ -12,7 +12,9 @@ export function chatSidebarWorktrees(
   return [
     ...new Map(
       [
-        ...Object.values(state.worktreesByRepo).flat(),
+        ...Object.values(state.worktreesByRepo)
+          .flat()
+          .filter((worktree) => worktree.automationProvenance?.kind !== 'created-by-automation'),
         ...state.folderWorkspaces.map(folderWorkspaceToWorktree)
       ].map((worktree) => [worktree.id, worktree])
     ).values()

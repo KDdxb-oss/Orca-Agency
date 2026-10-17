@@ -312,7 +312,8 @@ export function sendAiVaultServiceCall(
   child: ChildProcess,
   call: AiVaultServicePendingCall,
   isActive: () => boolean,
-  onFault: (error: Error) => void
+  onFault: (error: Error) => void,
+  onTitleTimeout: () => void
 ): void {
   if (call.cancelled || !isActive()) {
     return
@@ -322,7 +323,13 @@ export function sendAiVaultServiceCall(
       ? AI_VAULT_SERVICE_SCAN_TIMEOUT_MS
       : AI_VAULT_SERVICE_INTERACTIVE_TIMEOUT_MS
   call.timer = setTimeout(() => {
-    onFault(new Error(`AI Vault service timed out after ${timeoutMs}ms.`))
+    if (call.request.operation === 'titles') {
+      // A title batch may need to read many large transcripts. Timing it out
+      // must not discard the scanner child's incremental parse cache.
+      onTitleTimeout()
+    } else {
+      onFault(new Error(`AI Vault service timed out after ${timeoutMs}ms.`))
+    }
   }, timeoutMs)
   call.timer.unref?.()
   call.sent = true

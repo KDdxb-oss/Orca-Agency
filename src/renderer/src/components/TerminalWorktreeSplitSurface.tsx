@@ -30,6 +30,8 @@ export const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
   isFocused = isVisible,
   paneRect,
   isMultiPane = false,
+  reserveLeftWindowChrome = true,
+  reserveRightWindowChrome = true,
   hoverEdge,
   hoverSwap,
   shouldMeasureHiddenWorktree,
@@ -47,6 +49,8 @@ export const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
   isFocused?: boolean
   paneRect?: WorkspacePaneRect
   isMultiPane?: boolean
+  reserveLeftWindowChrome?: boolean
+  reserveRightWindowChrome?: boolean
   hoverEdge?: WorkspaceSplitEdge | null
   hoverSwap?: boolean
   shouldMeasureHiddenWorktree: boolean
@@ -121,6 +125,8 @@ export const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
           focusedGroupId={focusedGroupId}
           isWorktreeActive={isVisible}
           isWorktreeFocused={isFocused}
+          reserveLeftWindowChrome={reserveLeftWindowChrome}
+          reserveRightWindowChrome={reserveRightWindowChrome}
         />
       ) : isVisible ? (
         <div

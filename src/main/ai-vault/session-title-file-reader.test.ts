@@ -101,6 +101,25 @@ describe('readAiVaultSessionTitlesFromFiles', () => {
     })
   })
 
+  it('passes title cancellation into the transcript parser', async () => {
+    const path = await transcriptPath()
+    const controller = new AbortController()
+    parseAgentSessionFileCached.mockResolvedValue(null)
+
+    await readAiVaultSessionTitlesFromFiles(
+      [{ agent: 'codex', sessionId: 'session-1', transcriptPath: path }],
+      { signal: controller.signal }
+    )
+
+    expect(parseAgentSessionFileCached).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: 'codex' }),
+      process.platform,
+      undefined,
+      undefined,
+      controller.signal
+    )
+  })
+
   it('rejects a transcript whose parsed identity does not match the request', async () => {
     const path = await transcriptPath()
     parseAgentSessionFileCached.mockResolvedValue({
@@ -134,6 +153,150 @@ describe('readAiVaultSessionTitlesFromFiles', () => {
     })
     expect(parseAgentSessionFileCached).not.toHaveBeenCalled()
     expect(cache.set).not.toHaveBeenCalled()
+  })
+
+  it('reuses a scanned title for tab decoration without reopening a transcript', async () => {
+    const path = await transcriptPath()
+    const cached = {
+      agent: 'claude' as const,
+      sessionId: 'session-1',
+      title: 'Scanned conversation',
+      isHeadless: false
+    }
+    const cache = { get: vi.fn(() => cached), set: vi.fn() }
+
+    await expect(
+      readAiVaultSessionTitlesFromFiles(
+        [{ agent: 'claude', sessionId: 'session-1', transcriptPath: path, titleOnly: true }],
+        { cache }
+      )
+    ).resolves.toEqual({
+      titles: [{ agent: 'claude', sessionId: 'session-1', title: 'Scanned conversation' }]
+    })
+    expect(parseAgentSessionFileCached).not.toHaveBeenCalled()
+  })
+
+  it('reads a Codex tab title from the prefix without parsing a large transcript', async () => {
+    const path = await transcriptPath()
+    await writeFile(
+      path,
+      [
+        JSON.stringify({ type: 'session_meta', payload: { id: 'large-session', cwd: '/repo' } }),
+        JSON.stringify({
+          type: 'event_msg',
+          payload: { type: 'user_message', message: 'Repair terminal paste latency' }
+        }),
+        ' '.repeat(5 * 1024 * 1024)
+      ].join('\n')
+    )
+
+    await expect(
+      readAiVaultSessionTitlesFromFiles([
+        { agent: 'codex', sessionId: 'large-session', transcriptPath: path, titleOnly: true }
+      ])
+    ).resolves.toEqual({
+      titles: [
+        { agent: 'codex', sessionId: 'large-session', title: 'Repair terminal paste latency' }
+      ]
+    })
+    expect(parseAgentSessionFileCached).not.toHaveBeenCalled()
+  })
+
+  it('finds a paginated Codex title after a multi-megabyte context prefix', async () => {
+    const path = await transcriptPath()
+    await writeFile(
+      path,
+      [
+        JSON.stringify({
+          type: 'session_meta',
+          payload: { id: 'paginated-session', cwd: '/repo', history_mode: 'paginated' }
+        }),
+        JSON.stringify({
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Model-only copy' }]
+          }
+        }),
+        ' '.repeat(2 * 1024 * 1024),
+        JSON.stringify({
+          type: 'event_msg',
+          payload: {
+            type: 'item_completed',
+            item: {
+              type: 'UserMessage',
+              content: [{ type: 'text', text: 'Visible paginated prompt' }]
+            }
+          }
+        })
+      ].join('\n')
+    )
+
+    await expect(
+      readAiVaultSessionTitlesFromFiles([
+        { agent: 'codex', sessionId: 'paginated-session', transcriptPath: path, titleOnly: true }
+      ])
+    ).resolves.toEqual({
+      titles: [
+        { agent: 'codex', sessionId: 'paginated-session', title: 'Visible paginated prompt' }
+      ]
+    })
+    expect(parseAgentSessionFileCached).not.toHaveBeenCalled()
+  })
+
+  it('does not chase a first prompt beyond the Codex tab-title read limit', async () => {
+    const path = await transcriptPath()
+    await writeFile(
+      path,
+      [
+        JSON.stringify({ type: 'session_meta', payload: { id: 'large-session', cwd: '/repo' } }),
+        ' '.repeat(5 * 1024 * 1024),
+        JSON.stringify({
+          type: 'event_msg',
+          payload: { type: 'user_message', message: 'Prompt past the bounded prefix' }
+        })
+      ].join('\n')
+    )
+
+    await expect(
+      readAiVaultSessionTitlesFromFiles([
+        { agent: 'codex', sessionId: 'large-session', transcriptPath: path, titleOnly: true }
+      ])
+    ).resolves.toEqual({ titles: [] })
+    expect(parseAgentSessionFileCached).not.toHaveBeenCalled()
+  })
+
+  it('still reads the transcript when Claude headless classification is requested', async () => {
+    const path = await transcriptPath()
+    const cache = {
+      get: vi.fn(() => ({
+        agent: 'claude' as const,
+        sessionId: 'session-1',
+        title: 'Old scan'
+      })),
+      set: vi.fn()
+    }
+    parseAgentSessionFileCached.mockResolvedValue({
+      agent: 'claude',
+      sessionId: 'session-1',
+      title: 'Current transcript',
+      messageCount: 1,
+      previewMessages: [],
+      isHeadless: true
+    })
+
+    await expect(
+      readAiVaultSessionTitlesFromFiles(
+        [{ agent: 'claude', sessionId: 'session-1', transcriptPath: path }],
+        { cache }
+      )
+    ).resolves.toEqual({
+      titles: [
+        { agent: 'claude', sessionId: 'session-1', title: 'Current transcript', isHeadless: true }
+      ]
+    })
+    expect(parseAgentSessionFileCached).toHaveBeenCalledTimes(1)
   })
 
   it('caps exact transcript reads at 64 identities', async () => {

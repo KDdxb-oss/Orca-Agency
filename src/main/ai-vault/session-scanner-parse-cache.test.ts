@@ -75,6 +75,28 @@ async function cachedParse(path: string) {
 }
 
 describe('parseAgentSessionFileCached', () => {
+  it('leaves a cancelled Claude parse uncached for the next scan', async () => {
+    const root = await makeTempDir()
+    const path = join(root, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.jsonl')
+    await writeFile(path, `${userRecord(0, 'First prompt')}\n`)
+    const candidate = await claudeCandidate(path)
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      parseAgentSessionFileCached(
+        candidate,
+        process.platform,
+        undefined,
+        undefined,
+        controller.signal
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect((await parseAgentSessionFileCached(candidate, process.platform))?.title).toBe(
+      'First prompt'
+    )
+  })
+
   it('returns the identical cached session for an unchanged file', async () => {
     const root = await makeTempDir()
     const path = join(root, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.jsonl')

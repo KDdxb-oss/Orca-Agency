@@ -75,6 +75,26 @@ describe('workspace chat groups', () => {
     ])
   })
 
+  it('uses the current tab strip order for the bracket parent after a drag', () => {
+    const reordered = chatState({
+      tabsByWorktree: {
+        [chatWorktree.id]: [chatTab('b', { createdAt: 6_000 }), chatTab('a', { createdAt: 1_000 })]
+      }
+    })
+    const items = chatSidebarListItems(
+      [
+        { ...main, ownsWorkspaceName: true },
+        { ...child, ownsWorkspaceName: false }
+      ],
+      reordered,
+      ''
+    ).filter((item) => item.kind === 'chat')
+    expect(items.map((item) => [item.id, item.subTab])).toEqual([
+      ['child', false],
+      ['main', true]
+    ])
+  })
+
   it('brackets split workspaces together and restores independent sorting after unsplitting', () => {
     const older = { ...other, timestamp: 1 }
     const middle = {

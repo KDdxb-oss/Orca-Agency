@@ -208,7 +208,8 @@ async function parseCachedInLane(
       platform,
       resume: entry?.platform === platform ? entry.resume : null,
       stateFactory,
-      stats
+      stats,
+      signal
     })
     const enriched = await enrichSessionFromSidecar(candidate, read.session, platform)
     storeSessionParseCacheEntry(file.path, {

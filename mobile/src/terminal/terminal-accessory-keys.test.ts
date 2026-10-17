@@ -3,6 +3,18 @@ import { describe, expect, it } from 'vitest'
 import { buildTerminalShortcutKey, TERMINAL_ACCESSORY_KEYS } from './terminal-accessory-keys'
 
 describe('TERMINAL_ACCESSORY_KEYS', () => {
+  it('sends Shift+Left Arrow before Shift+Tab', () => {
+    const ids = TERMINAL_ACCESSORY_KEYS.map((key) => key.id)
+
+    expect(TERMINAL_ACCESSORY_KEYS.find((candidate) => candidate.id === 'shiftArrowLeft')).toEqual({
+      id: 'shiftArrowLeft',
+      label: 'Shift+←',
+      bytes: '\x1b[1;2D',
+      accessibilityLabel: 'Shift Left Arrow'
+    })
+    expect(ids.indexOf('shiftArrowLeft')).toBe(ids.indexOf('shiftTab') - 1)
+  })
+
   it('sends reverse-tab with a non-repeatable Shift+Tab key', () => {
     const key = TERMINAL_ACCESSORY_KEYS.find((candidate) => candidate.id === 'shiftTab')
 

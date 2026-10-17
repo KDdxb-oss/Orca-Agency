@@ -224,7 +224,10 @@ describe('connectPanePty', () => {
       expect(transport.connect).toHaveBeenCalledWith(
         expect.objectContaining({
           command: expect.stringContaining("'resume' 'original-aside-conversation'"),
-          resumeProviderSession: { key: 'session_id', id: 'original-aside-conversation' }
+          resumeProviderSession: expect.objectContaining({
+            key: 'session_id',
+            id: 'original-aside-conversation'
+          })
         })
       )
       expect(transport.connect.mock.calls[0][0].command).toContain('CODEX_HOME')

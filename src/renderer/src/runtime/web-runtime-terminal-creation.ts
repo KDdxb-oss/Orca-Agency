@@ -6,6 +6,7 @@ import {
 import { createWebRuntimeSessionTerminalResult } from './web-runtime-terminal-create-operation'
 import { toWebTerminalSurfaceTabId } from './web-terminal-surface-id'
 import type {
+  CreatedWebRuntimeSessionTerminal,
   CreateWebRuntimeSessionTerminalArgs,
   WebRuntimeTerminalCreateOutcome
 } from './web-runtime-session-types'
@@ -14,6 +15,12 @@ export async function createWebRuntimeSessionTerminal(
   args: CreateWebRuntimeSessionTerminalArgs
 ): Promise<WebRuntimeTerminalCreateOutcome> {
   return (await createWebRuntimeSessionTerminalResult(args)).outcome
+}
+
+export function createWebRuntimeSessionTerminalWithIdentity(
+  args: CreateWebRuntimeSessionTerminalArgs
+): Promise<CreatedWebRuntimeSessionTerminal> {
+  return createWebRuntimeSessionTerminalResult(args)
 }
 
 export async function createWebRuntimeAgentSessionTerminal(

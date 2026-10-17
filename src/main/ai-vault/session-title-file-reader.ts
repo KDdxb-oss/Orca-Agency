@@ -1,4 +1,5 @@
-import { wslGatedLstat } from '../native-chat/wsl-transcript-fs-access'
+import { createInterface } from 'node:readline'
+import { openTranscriptReadStream, wslGatedLstat } from '../native-chat/wsl-transcript-fs-access'
 import {
   AI_VAULT_SESSION_TITLE_REQUEST_MAX_COUNT,
   type AiVaultSessionTitle,
@@ -6,9 +7,43 @@ import {
   type AiVaultSessionTitlesResult
 } from '../../shared/ai-vault-session-title'
 import { parseAgentSessionFileCached } from './session-scanner-parse-cache'
+import { parseCodexSessionContent } from './session-scanner-codex-parser'
+import { readCodexSessionIndexTitle } from './session-scanner-codex-title-index'
+import type { FileWithMtime } from './session-scanner-types'
 import { isAiVaultSessionResumableContent } from '../../shared/ai-vault-types'
 
 const TITLE_PARSE_CONCURRENCY = 4
+// Tab names come from the first user turn or Codex's small session index. A
+// multi-gigabyte live transcript must never be drained just to decorate a tab.
+const CODEX_TAB_TITLE_PREFIX_BYTES = 4 * 1024 * 1024
+
+async function readBoundedCodexTabTitle(file: FileWithMtime, signal?: AbortSignal) {
+  if (!file.sizeBytes || signal?.aborted) {
+    return null
+  }
+  const stream = openTranscriptReadStream(
+    file.path,
+    {
+      encoding: 'utf-8',
+      start: 0,
+      end: Math.min(file.sizeBytes, CODEX_TAB_TITLE_PREFIX_BYTES) - 1
+    },
+    'scan',
+    signal
+  )
+  const lines = createInterface({ input: stream, crlfDelay: Infinity })
+  try {
+    return await parseCodexSessionContent({
+      file,
+      content: lines,
+      signal,
+      readIndexedTitle: (sessionId) => readCodexSessionIndexTitle(file.path, null, sessionId)
+    })
+  } finally {
+    lines.close()
+    stream.destroy()
+  }
+}
 
 export type AiVaultSessionTitleCache = {
   get(request: AiVaultSessionTitleRequest): AiVaultSessionTitle | null
@@ -23,6 +58,12 @@ async function readOneTitle(
   if (signal?.aborted) {
     return null
   }
+  if (request.titleOnly) {
+    const cached = cache?.get(request)
+    if (cached?.title.trim()) {
+      return { agent: cached.agent, sessionId: cached.sessionId, title: cached.title }
+    }
+  }
   const transcriptPath = request.transcriptPath?.trim()
   if (!transcriptPath) {
     const cached = cache?.get(request)
@@ -36,19 +77,22 @@ async function readOneTitle(
     // Why: this key is a raw lstat with no content dependency, so it only
     // matches the scanner's for providers that declare none — today claude and
     // codex, which is all this request type carries.
-    const session = await parseAgentSessionFileCached(
-      {
-        agent: request.agent,
-        file: {
-          path: transcriptPath,
-          mtimeMs: stats.mtimeMs,
-          modifiedAt: stats.mtime.toISOString(),
-          sizeBytes: stats.size
-        },
-        codexHome: null
-      },
-      process.platform
-    )
+    const file = {
+      path: transcriptPath,
+      mtimeMs: stats.mtimeMs,
+      modifiedAt: stats.mtime.toISOString(),
+      sizeBytes: stats.size
+    }
+    const session =
+      request.titleOnly && request.agent === 'codex'
+        ? await readBoundedCodexTabTitle(file, signal)
+        : await parseAgentSessionFileCached(
+            { agent: request.agent, file, codexHome: null },
+            process.platform,
+            undefined,
+            undefined,
+            signal
+          )
     if (
       signal?.aborted ||
       session?.agent !== request.agent ||

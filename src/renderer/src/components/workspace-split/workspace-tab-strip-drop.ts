@@ -1,7 +1,6 @@
 import { useAppStore } from '@/store'
 import { activateAndRevealWorkspace } from '@/lib/worktree-activation'
 import { getConnectionIdFromState } from '@/lib/connection-owner-resolution'
-import { normalizeRuntimePathForComparison } from '../../../../shared/cross-platform-path'
 import { buildChatSidebarRows } from '../sidebar/chat-sidebar-rows'
 import { setChatFolder } from '../sidebar/chat-sidebar-preferences'
 
@@ -47,9 +46,7 @@ export function workspaceTabStripDropTarget(
     getConnectionIdFromState(state, sourceId) !== null ||
     getConnectionIdFromState(state, targetId) !== null ||
     tab?.contentType !== 'terminal' ||
-    (tab.executionHostId && tab.executionHostId !== 'local') ||
-    normalizeRuntimePathForComparison(source.path) !==
-      normalizeRuntimePathForComparison(destination.path)
+    (tab.executionHostId && tab.executionHostId !== 'local')
   ) {
     return null
   }

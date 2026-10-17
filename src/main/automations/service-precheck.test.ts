@@ -260,4 +260,80 @@ describe('AutomationService prechecks', () => {
       error: 'Precheck exited with code 1.'
     })
   })
+
+  it('keeps a scheduled local run pending when the laptop becomes busy during its precheck', async () => {
+    vi.setSystemTime(new Date('2026-05-12T08:59:00Z'))
+    const store = await createStore()
+    store.addRepo(makeRepo())
+    const automation = store.createAutomation({
+      name: 'Quiet laptop check',
+      prompt: 'Check the repo',
+      precheck: { command: 'test -f ready', timeoutSeconds: 30 },
+      agentId: 'codex',
+      projectId: 'r1',
+      workspaceMode: 'new_per_run',
+      timezone: 'UTC',
+      rrule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0',
+      dtstart: new Date('2026-05-12T00:00:00Z').getTime()
+    })
+    const dueAt = automation.nextRunAt
+    let ready = true
+    const precheckResult = {
+      command: 'test -f ready',
+      exitCode: 0,
+      timedOut: false,
+      durationMs: 5,
+      stdout: '',
+      stderr: '',
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      error: null,
+      startedAt: Date.now(),
+      completedAt: Date.now()
+    }
+    runAutomationPrecheckMock.mockImplementationOnce(async () => {
+      ready = false
+      return precheckResult
+    })
+    runAutomationPrecheckMock.mockResolvedValue(precheckResult)
+    const headlessDispatcher = vi.fn().mockResolvedValue({
+      workspaceId: 'wt1',
+      terminalSessionId: 'tab1',
+      terminalPaneKey: 'pane1',
+      terminalPtyId: 'pty1'
+    })
+    const service = new AutomationService(store, {
+      tickMs: 60_000,
+      localScheduleReady: () => ready,
+      headlessDispatcher
+    })
+    try {
+      vi.setSystemTime(dueAt + 60_000)
+      service.start()
+      await vi.waitFor(() =>
+        expect(store.listAutomationRuns(automation.id)[0]).toMatchObject({
+          status: 'pending',
+          precheckResult: { exitCode: 0 }
+        })
+      )
+      expect(runAutomationPrecheckMock).toHaveBeenCalledTimes(1)
+      expect(headlessDispatcher).not.toHaveBeenCalled()
+      const waiting = store.listAutomationRuns(automation.id)[0]!
+      expect(store.listAutomations().find((item) => item.id === automation.id)?.nextRunAt).toBe(
+        dueAt
+      )
+
+      ready = true
+      await vi.advanceTimersByTimeAsync(60_000)
+      await vi.waitFor(() => expect(headlessDispatcher).toHaveBeenCalledTimes(1))
+      expect(runAutomationPrecheckMock).toHaveBeenCalledTimes(2)
+      expect(store.listAutomationRuns(automation.id)).toHaveLength(1)
+      expect(store.listAutomationRuns(automation.id)[0]).toMatchObject({
+        id: waiting.id,
+        status: 'dispatched'
+      })
+    } finally {
+      service.stop()
+    }
+  })
 })

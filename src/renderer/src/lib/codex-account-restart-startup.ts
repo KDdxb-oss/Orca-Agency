@@ -1,8 +1,12 @@
 import { useAppStore } from '@/store'
 import { buildAgentResumeStartupPlan } from '@/lib/tui-agent-startup'
 import { resolveAgentResumeLaunchTarget } from '@/lib/agent-resume-launch-target'
-import { getExecutionHostIdForWorktree } from '@/lib/worktree-runtime-owner'
+import {
+  getExecutionHostIdForWorktree,
+  getKnownExecutionHostIdForWorktree
+} from '@/lib/worktree-runtime-owner'
 import { getLocalProjectExecutionRuntimeContext } from '@/lib/local-preflight-context'
+import { savedTabResume } from '@/components/terminal-pane/pty-connection/saved-tab-resume'
 import { makePaneKey } from '../../../shared/stable-pane-id'
 import { normalizeAgentProviderSession } from '../../../shared/agent-session-resume'
 import {
@@ -35,7 +39,19 @@ export function buildCodexAccountRestartStartup(args: {
   const paneKey = makePaneKey(args.tabId, args.leafId)
   const entry = state.agentStatusByPaneKey[paneKey]
   const sleeping = state.sleepingAgentSessionsByPaneKey[paneKey]
-  const agentType = entry?.agentType ?? sleeping?.agent
+  // A restored tab can retain its verified transcript after the hook status has gone away.
+  // Never borrow it when this pane has newer status without a session identity.
+  const saved =
+    !entry && !sleeping
+      ? savedTabResume(
+          state,
+          args.worktreeId,
+          args.tabId,
+          getKnownExecutionHostIdForWorktree(state, args.worktreeId),
+          paneKey
+        )
+      : null
+  const agentType = entry?.agentType ?? sleeping?.agent ?? saved?.agent
   if (agentType !== 'codex') {
     return CODEX_ACCOUNT_RESTART_STARTUP
   }
@@ -43,6 +59,9 @@ export function buildCodexAccountRestartStartup(args: {
     normalizeAgentProviderSession(entry?.providerSession) ??
     normalizeAgentProviderSession(
       sleeping?.agent === 'codex' ? sleeping.providerSession : undefined
+    ) ??
+    normalizeAgentProviderSession(
+      saved?.agent === 'codex' ? { key: 'session_id', id: saved.sessionId } : undefined
     )
   if (!providerSession) {
     return CODEX_ACCOUNT_RESTART_STARTUP
@@ -81,7 +100,8 @@ export function buildCodexAccountRestartStartup(args: {
       ? { ompResumeFilePath: launchConfig.ompResumeFilePath }
       : {}),
     platform: resumeTarget.platform,
-    shell: resumeTarget.shell
+    shell: resumeTarget.shell,
+    resumeInLaunchCwd: true
   })
   if (!startupPlan) {
     return CODEX_ACCOUNT_RESTART_STARTUP

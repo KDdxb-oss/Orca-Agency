@@ -128,6 +128,36 @@ describe('keeping live chats after their tab closes', () => {
     expect(chatLiveSessionSnapshot(subfolder, 5)).toBeNull()
   })
 
+  it('keeps the original folder when a live tab is displayed in another workspace', () => {
+    const key = chatSessionKey('local', 'claude', 'c1')
+    const original = moved
+    const displayed = chatWorktree
+    const row = chatRow({
+      id: key,
+      sessionKey: key,
+      worktree: displayed,
+      folderWorktree: original,
+      liveSession: {
+        agent: 'claude',
+        sessionId: 'c1',
+        transcriptPath: 'C:\\Users\\me\\.claude\\projects\\C--dev-Uncategorized\\c1.jsonl',
+        title: 'Moved tab'
+      }
+    })
+    const snapshot = chatLiveSessionSnapshot(row, 5)
+    expect(snapshot?.cwd).toBe(original.path)
+    expect(
+      chatResumeSession({
+        ...row,
+        session: chatSession('c1', {
+          agent: 'claude',
+          cwd: snapshot!.cwd,
+          filePath: snapshot!.filePath
+        })
+      })?.resumeCwd
+    ).toBe(original.path)
+  })
+
   it('refreshes a remembered time and name at most once a minute of live activity', () => {
     const base = chatLiveSessionSnapshot(
       chatRow({
@@ -175,7 +205,7 @@ describe('keeping live chats after their tab closes', () => {
       ...previous,
       cwd: '/new',
       filePath: '/home/me/.claude/projects/-new/c1.jsonl',
-      updatedAt: new Date(Date.parse(base.updatedAt) + 1_000).toISOString()
+      updatedAt: new Date(Date.parse(base.updatedAt ?? base.modifiedAt) + 1_000).toISOString()
     }
     expect(freshestChatSnapshot(previous, current, true)).toMatchObject({
       cwd: '/new',

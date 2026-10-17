@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   closeStructuredAgentSession: vi.fn(),
   closeTerminalTab: vi.fn(),
   closeUnifiedTab: vi.fn(),
+  captureClosedChatTabCompletion: vi.fn(),
+  completeCapturedChat: vi.fn(),
   clearNativeChatLaunchDraft: vi.fn(),
   setActiveWorktree: vi.fn(),
   toastError: vi.fn()
@@ -26,7 +28,8 @@ const store = vi.hoisted(() => ({
   reconcileWorktreeTabModel: vi.fn(() => ({ renderableTabCount: 1 })),
   setActiveWorktree: mocks.setActiveWorktree,
   tabsByWorktree: {},
-  unifiedTabsByWorktree: {} as Record<string, unknown[]>
+  unifiedTabsByWorktree: {} as Record<string, unknown[]>,
+  settings: { chatSidebar: {} }
 }))
 
 vi.mock('react', async () => {
@@ -54,6 +57,10 @@ vi.mock('../editor/editor-autosave', () => ({
 
 vi.mock('../terminal/terminal-tab-actions', () => ({
   closeTerminalTab: mocks.closeTerminalTab
+}))
+
+vi.mock('@/lib/chat-sidebar-tab-close', () => ({
+  captureClosedChatTabCompletion: mocks.captureClosedChatTabCompletion
 }))
 
 vi.mock('../../runtime/web-runtime-session', () => ({
@@ -114,6 +121,7 @@ beforeEach(() => {
   store.unifiedTabsByWorktree = { 'wt-1': [AGENT_TAB] }
   mocks.closeStructuredAgentSession.mockResolvedValue('closed')
   mocks.callRuntimeRpc.mockResolvedValue({ ok: true })
+  mocks.captureClosedChatTabCompletion.mockReturnValue(mocks.completeCapturedChat)
 })
 
 describe('structured agent-session close ordering', () => {
@@ -122,6 +130,31 @@ describe('structured agent-session close ordering', () => {
     closeItem(AGENT_TAB.id)
 
     expect(mocks.closeUnifiedTab).toHaveBeenCalledWith(AGENT_TAB.id)
+    expect(mocks.captureClosedChatTabCompletion).toHaveBeenCalledWith(
+      expect.any(Function),
+      AGENT_TAB.id
+    )
+    expect(mocks.completeCapturedChat).toHaveBeenCalledOnce()
+  })
+
+  it('records a terminal chat Done only after the close callback reports success', () => {
+    const terminalTab = {
+      ...AGENT_TAB,
+      id: 'unified-terminal',
+      entityId: 'terminal-1',
+      contentType: 'terminal' as const
+    }
+    store.unifiedTabsByWorktree = { 'wt-1': [terminalTab] }
+    useTabGroupTabCloseCommands({ worktreeId: 'wt-1' }).closeItem(terminalTab.id)
+
+    expect(mocks.captureClosedChatTabCompletion).toHaveBeenCalledWith(
+      expect.any(Function),
+      terminalTab.entityId
+    )
+    expect(mocks.completeCapturedChat).not.toHaveBeenCalled()
+    const closeOptions = mocks.closeTerminalTab.mock.calls[0]?.[1]
+    closeOptions?.onClosed?.()
+    expect(mocks.completeCapturedChat).toHaveBeenCalledOnce()
   })
 
   it('returns immediately for an unadopted launch tab', async () => {

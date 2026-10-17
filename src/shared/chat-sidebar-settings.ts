@@ -64,6 +64,8 @@ export type ChatSidebarSettings = {
   hiddenFolders?: string[]
   /** Automation-owned tab/pane and provider identities; retained after run cleanup. */
   automationChats?: string[]
+  /** Exact tabs the user reopened from session history, even when the provider was automated. */
+  userResumedTabs?: string[]
   /** Next launch destination; never changes the owner of a running terminal. */
   folderAssignments?: Record<string, { worktreeId: string; executionHostId: ExecutionHostId }>
   /** All resident chats in a workspace share this folder, including newly created tabs. */

@@ -147,7 +147,13 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
 
   async launchAgentTerminal(
     worktreeSelector: string,
-    opts: { agent: TuiAgent; prompt: string; title?: string; extraAgentArgs?: string }
+    opts: {
+      agent: TuiAgent
+      prompt: string
+      title?: string
+      extraAgentArgs?: string
+      unlisted?: boolean
+    }
   ): Promise<RuntimeTerminalCreate> {
     const worktree = await this.resolveWorktreeSelector(worktreeSelector)
     // Why: `getRepo(id)` is host-blind; the same repo id on two hosts must build the launch for the
@@ -174,7 +180,8 @@ export class OrcaRuntimeWithTerminalCreateDeduplication extends OrcaRuntimeWithC
       launchAgent: startup.agent,
       startupCommandDelivery: startup.startup.startupCommandDelivery,
       telemetry: startup.startup.telemetry,
-      title: opts.title
+      title: opts.title,
+      ...(opts.unlisted ? { deferMobileSessionPublish: true } : {})
     })
     // Why: agents that read the prompt after they start get it typed in, not on argv.
     if (startup.followup) {

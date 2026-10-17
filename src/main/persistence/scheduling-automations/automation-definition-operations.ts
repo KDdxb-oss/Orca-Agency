@@ -118,7 +118,8 @@ export function createAutomation(
     missedRunPolicy: 'run_once_within_grace',
     missedRunGraceMinutes: input.missedRunGraceMinutes ?? 720,
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
+    definitionRevision: 0
   }
   assertAutomationExtraAgentArgs(automation)
   operations.state.automations = [...(operations.state.automations ?? []), automation]
@@ -227,7 +228,8 @@ export function updateAutomation(
     nextRunAt: scheduleChanged
       ? nextAutomationOccurrenceAfter(rrule, dtstart, Date.now())
       : current.nextRunAt,
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
+    definitionRevision: (current.definitionRevision ?? 0) + 1
   }
   if (extraAgentArgs === undefined) {
     delete merged.extraAgentArgs

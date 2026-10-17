@@ -187,6 +187,15 @@ export class OrcaRuntimeWithFitOverrideListeners extends OrcaRuntimeWithStopRequ
     >
   >()
 
+  hasMobileTerminalSubscribers(): boolean {
+    for (const subscribers of this.mobileSubscribers.values()) {
+      if (subscribers.size > 0) {
+        return true
+      }
+    }
+    return false
+  }
+
   // Why: Phase-5 query-responder suppression — a terminal-RPC subscribe
   // stream feeds a remote xterm view (mobile/web/remote desktop) that answers
   // queries with view authority, so main must yield while one is attached

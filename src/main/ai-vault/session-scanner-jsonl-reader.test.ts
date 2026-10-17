@@ -4,10 +4,16 @@ import { MAX_SESSION_TRANSCRIPT_RECORD_BYTES } from './session-transcript-record
 
 const source = vi.hoisted(() => {
   const chunks: Buffer[] = []
-  return { chunks, closed: false }
+  return { chunks, closed: false, signal: null as AbortSignal | null }
 })
 vi.mock('../native-chat/wsl-transcript-fs-access', () => ({
-  openTranscriptReadStream: async function* () {
+  openTranscriptReadStream: async function* (
+    _path: string,
+    _options: unknown,
+    _priority: string,
+    signal?: AbortSignal
+  ) {
+    source.signal = signal ?? null
     source.closed = false
     try {
       yield* source.chunks
@@ -18,6 +24,28 @@ vi.mock('../native-chat/wsl-transcript-fs-access', () => ({
 }))
 
 afterEach(() => vi.restoreAllMocks())
+
+it('stops a long resumable read when a replacement scan cancels it', async () => {
+  source.chunks = [Buffer.from('first\nsecond\n'), Buffer.from('third\n')]
+  const controller = new AbortController()
+  const lines: string[] = []
+
+  await expect(
+    consumeCompleteJsonlLines({
+      path: '/log',
+      start: 0,
+      signal: controller.signal,
+      onLine: (line) => {
+        lines.push(line)
+        controller.abort()
+      }
+    })
+  ).rejects.toMatchObject({ name: 'AbortError' })
+
+  expect(lines).toEqual(['first'])
+  expect(source.signal).toBe(controller.signal)
+  expect(source.closed).toBe(true)
+})
 
 it('decodes a single owned unterminated tail without copying it or advancing its cursor', async () => {
   const tail = JSON.stringify({ text: 'é😀 growing final record' })

@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import { buildProfileStateCutoverFixture } from '../persistence/profile-state-cutover-fixture'
-import type { AutomationRun } from '../../shared/automations-types'
+import type {
+  Automation,
+  AutomationPrecheckResult,
+  AutomationRun
+} from '../../shared/automations-types'
 import type { HeadlessAutomationDispatchLaunch } from './headless-dispatch'
 import { runHeadlessAutomationDispatch } from './headless-dispatch-runner'
+import { ScheduledLocalAutomationDeferredError } from './local-schedule-gate'
 
 function fixture(launch: HeadlessAutomationDispatchLaunch) {
   const state = buildProfileStateCutoverFixture('/fixture')
-  const automation = { ...state.automations[0], precheck: null }
+  const automation: Automation = { ...state.automations[0], precheck: null }
   const run: AutomationRun = {
     ...state.automationRuns[0],
     automationId: automation.id,
@@ -24,7 +29,7 @@ function fixture(launch: HeadlessAutomationDispatchLaunch) {
       repeatSkip: vi.fn(async () => null),
       advanceNextRun: vi.fn(async () => automation)
     },
-    runPrecheck: vi.fn(async () => null),
+    runPrecheck: vi.fn<() => Promise<AutomationPrecheckResult | null>>(async () => null),
     markDispatchResult: vi.fn(async () => dispatched),
     watchRun: vi.fn()
   }
@@ -103,5 +108,61 @@ describe('headless automation observation during persistence', () => {
       error: 'shell unavailable'
     })
     expect(context.watchRun).not.toHaveBeenCalled()
+  })
+
+  it('keeps the scheduled occurrence pending if launch resources disappear', async () => {
+    const context = fixture(terminal)
+    context.dispatcher.mockRejectedValueOnce(new ScheduledLocalAutomationDeferredError())
+    await runHeadlessAutomationDispatch(context)
+    expect(context.runs.updateRun).toHaveBeenCalledExactlyOnceWith({
+      runId: context.run.id,
+      status: 'pending',
+      workspaceId: context.automation.workspaceId,
+      precheckResult: null,
+      error: null
+    })
+    expect(context.watchRun).not.toHaveBeenCalled()
+  })
+
+  it('keeps the scheduled occurrence pending if its precheck stops for computer activity', async () => {
+    const context = fixture(terminal)
+    context.run.trigger = 'scheduled'
+    context.automation.precheck = { command: 'check', timeoutSeconds: 5 }
+    context.runPrecheck.mockRejectedValueOnce(new ScheduledLocalAutomationDeferredError())
+    await runHeadlessAutomationDispatch(context)
+    expect(context.runs.updateRun).toHaveBeenCalledExactlyOnceWith({
+      runId: context.run.id,
+      status: 'pending',
+      workspaceId: context.automation.workspaceId,
+      error: null
+    })
+    expect(context.dispatcher).not.toHaveBeenCalled()
+  })
+
+  it('defers a failed precheck result if the computer became active at completion', async () => {
+    const context = fixture(terminal)
+    context.run.trigger = 'scheduled'
+    context.automation.precheck = { command: 'check', timeoutSeconds: 5 }
+    context.runPrecheck.mockResolvedValueOnce({
+      command: 'check',
+      exitCode: 1,
+      timedOut: false,
+      durationMs: 5,
+      stdout: '',
+      stderr: '',
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      error: null,
+      startedAt: 0,
+      completedAt: 5
+    })
+    await runHeadlessAutomationDispatch({ ...context, canLaunchScheduledLocal: () => false })
+    expect(context.runs.updateRun).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        status: 'pending',
+        precheckResult: expect.objectContaining({ exitCode: 1 })
+      })
+    )
+    expect(context.dispatcher).not.toHaveBeenCalled()
   })
 })

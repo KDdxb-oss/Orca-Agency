@@ -167,7 +167,12 @@ function normalizeTitleRequests(raw: unknown): AiVaultSessionTitleRequest[] {
     ) {
       continue
     }
-    requests.push({ agent, sessionId, transcriptPath })
+    requests.push({
+      agent,
+      sessionId,
+      transcriptPath,
+      ...(record.titleOnly === true ? { titleOnly: true } : {})
+    })
   }
   return requests
 }

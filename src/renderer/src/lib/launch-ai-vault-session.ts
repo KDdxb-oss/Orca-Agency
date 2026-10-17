@@ -1,11 +1,19 @@
 import { useAppStore } from '@/store'
 import { persistAgentLaunchTabOrder } from '@/lib/launch-agent-tab-order'
 import { tuiAgentToAgentKind } from '@/lib/telemetry'
-import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
 import {
-  createWebRuntimeSessionTerminal,
+  getExecutionHostIdForWorktree,
+  getRuntimeEnvironmentIdForWorktree
+} from '@/lib/worktree-runtime-owner'
+import {
+  createWebRuntimeSessionTerminalWithIdentity,
   isWebRuntimeSessionActive
 } from '@/runtime/web-runtime-session'
+import { toWebTerminalSurfaceTabId } from '@/runtime/web-terminal-surface-id'
+import { webTerminalPlacementParentTabId } from '@/runtime/web-session-terminal-placement'
+import { updateChatSidebar } from '@/components/sidebar/chat-sidebar-preferences'
+import { chatFallbackId } from '@/components/sidebar/chat-sidebar-types'
+import { toast } from 'sonner'
 import type { AiVaultAgent } from '../../../shared/ai-vault-types'
 import type {
   AgentProviderSessionMetadata,
@@ -17,6 +25,15 @@ import type { WebRuntimeTerminalCreateOutcome } from '@/runtime/web-runtime-sess
 export type LaunchAiVaultSessionInNewTabResult =
   | { tabId: string; groupId?: string }
   | { tabId: null; groupId?: string; runtimeLaunch: Promise<WebRuntimeTerminalCreateOutcome> }
+
+function rememberUserResumedTab(hostId: string, tabId: string): void {
+  const key = chatFallbackId(hostId, tabId)
+  void updateChatSidebar((current) =>
+    current.userResumedTabs?.includes(key)
+      ? null
+      : { userResumedTabs: [...(current.userResumedTabs ?? []), key] }
+  ).catch(() => toast.error('Could not save the resumed chat in Chats.'))
+}
 
 export function launchAiVaultSessionInNewTab(args: {
   agent: AiVaultAgent
@@ -31,10 +48,11 @@ export function launchAiVaultSessionInNewTab(args: {
   splitDirection?: TabSplitDirection
 }): LaunchAiVaultSessionInNewTabResult {
   const store = useAppStore.getState()
+  const executionHostId = getExecutionHostIdForWorktree(store, args.worktreeId)
   let targetGroupId = args.targetGroupId
   const runtimeEnvironmentId = getRuntimeEnvironmentIdForWorktree(store, args.worktreeId)
   if (isWebRuntimeSessionActive(runtimeEnvironmentId)) {
-    const runtimeLaunch = createWebRuntimeSessionTerminal({
+    const runtimeLaunch = createWebRuntimeSessionTerminalWithIdentity({
       worktreeId: args.worktreeId,
       environmentId: runtimeEnvironmentId,
       ...(targetGroupId ? { targetGroupId } : {}),
@@ -49,9 +67,15 @@ export function launchAiVaultSessionInNewTab(args: {
       ...(args.launchConfig ? { agentArgs: args.launchConfig.agentArgs } : {}),
       activate: true
     })
-    const observedRuntimeLaunch = runtimeLaunch.then((outcome) => {
+    const observedRuntimeLaunch = runtimeLaunch.then(({ outcome, hostTabId }) => {
       if (outcome.status === 'created') {
         useAppStore.getState().setActiveTabType('terminal', args.worktreeId)
+        if (hostTabId) {
+          rememberUserResumedTab(
+            executionHostId,
+            toWebTerminalSurfaceTabId(webTerminalPlacementParentTabId(hostTabId))
+          )
+        }
       }
       return outcome
     })
@@ -84,6 +108,7 @@ export function launchAiVaultSessionInNewTab(args: {
     }
   })
   store.setActiveTabType('terminal', args.worktreeId)
+  rememberUserResumedTab(executionHostId, tab.id)
 
   persistAgentLaunchTabOrder(args.worktreeId, tab.id)
 

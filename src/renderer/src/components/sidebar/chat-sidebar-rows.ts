@@ -77,7 +77,12 @@ export function buildChatSidebarRows(
       chatPreference(settings?.sessions, row)?.createdAt ??
       (Number.isFinite(sessionCreatedAt) ? sessionCreatedAt : tab?.createdAt)
     const identities = [row.id, ...row.aliases, ...(row.sessionKey ? [row.sessionKey] : [])]
-    row.automated = identities.some((id) => automationChats.has(id))
+    const userResumedTab =
+      !!row.tabId &&
+      settings?.userResumedTabs?.includes(chatFallbackId(row.hostId, row.tabId)) === true
+    // An explicit user resume overrides old automation markers only for that exact tab.
+    row.automated =
+      !userResumedTab && identities.some((id) => automationChats.has(id))
     // Why: hiding old history must not hide a conversation the user opens again.
     if (!row.tabId && identities.some((id) => hidden.has(id))) {
       return

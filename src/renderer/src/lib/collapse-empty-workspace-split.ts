@@ -9,7 +9,8 @@ export function collapseEmptyWorkspaceSplit(state: AppState, worktreeId: string)
     !partner ||
     (state.unifiedTabsByWorktree[worktreeId] ?? []).length > 0 ||
     (state.tabsByWorktree[worktreeId] ?? []).length > 0 ||
-    (state.browserTabsByWorktree[worktreeId] ?? []).length > 0
+    (state.browserTabsByWorktree[worktreeId] ?? []).length > 0 ||
+    state.openFiles.some((file) => file.worktreeId === worktreeId)
   ) {
     return false
   }

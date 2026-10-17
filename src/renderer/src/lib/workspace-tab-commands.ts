@@ -18,6 +18,7 @@ import {
 import { TOGGLE_FLOATING_TERMINAL_EVENT } from './floating-terminal'
 import { closeWorkspaceBrowserTab } from './workspace-browser-tab-close'
 import { resolveBrowserWorkspaceOwner } from './browser-workspace-source-resolution'
+import { captureClosedChatTabCompletion } from './chat-sidebar-tab-close'
 
 export type WorkspaceTabTarget =
   | { kind: 'tab'; worktreeId: string; tabId: string }
@@ -143,6 +144,14 @@ export function dispatchWorkspaceTabCommand(command: WorkspaceTabCommand): boole
       worktreeId: target.worktreeId,
       groupTabs: state.unifiedTabsByWorktree[target.worktreeId] ?? []
     })
+    const completeChatClose =
+      state.settings?.chatSidebar &&
+      (tab.contentType === 'terminal' || tab.contentType === 'agent-session')
+        ? captureClosedChatTabCompletion(
+            useAppStore.getState,
+            tab.contentType === 'terminal' ? tab.entityId : tab.id
+          )
+        : undefined
     if ((command.bulk || command.skipEmptyCheck) && tab.isPinned) {
       return true
     }
@@ -154,7 +163,11 @@ export function dispatchWorkspaceTabCommand(command: WorkspaceTabCommand): boole
             floatingPanelGuestOwned: command.floatingPanelGuestOwned
           })
     const close = () =>
-      commands.closeItem(tab.id, { whenEmptied, skipRunningProcessConfirm: command.bulk })
+      commands.closeItem(tab.id, {
+        whenEmptied,
+        skipRunningProcessConfirm: command.bulk,
+        onClosed: completeChatClose
+      })
     if (tab.contentType === 'terminal' || command.bulk) {
       close()
     } else {

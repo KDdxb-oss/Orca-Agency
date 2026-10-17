@@ -105,7 +105,8 @@ export function createAutomationRun(
     error: null,
     startedAt: null,
     dispatchedAt: null,
-    createdAt: now
+    createdAt: now,
+    definitionRevision: automation.definitionRevision ?? 0
   }
   operations.state.automationRuns = pruneAutomationRuns([
     ...(operations.state.automationRuns ?? []),

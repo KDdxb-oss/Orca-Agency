@@ -121,6 +121,43 @@ describe('AiVaultScannerServiceClient', () => {
     client.dispose()
   })
 
+  it('cancels a slow title batch without discarding the scanner cache', async () => {
+    vi.useFakeTimers()
+    const { child, client } = setup()
+    const slow = client.request({ type: 'request', operation: 'titles', requests: [] })
+    readyAiVaultServiceChild(child)
+    await Promise.resolve()
+    const slowId = aiVaultServiceRequestId(child, 'titles')
+
+    vi.advanceTimersByTime(15_000)
+    await expect(slow).rejects.toMatchObject({ name: 'AbortError' })
+    expect(child.sent).toContainEqual({ type: 'cancel', id: slowId })
+    expect(child.killed).toBe(false)
+
+    // The child acknowledges the cancellation; a later batch reuses this
+    // process and the parsed transcript entries it already accumulated.
+    child.emit('message', {
+      type: 'result',
+      id: slowId,
+      operation: 'titles',
+      value: { titles: [] }
+    })
+    const next = client.request({ type: 'request', operation: 'titles', requests: [] })
+    await Promise.resolve()
+    const nextId = (child.sent.at(-1) as { id: number }).id
+    expect(nextId).toBeGreaterThan(slowId)
+    child.emit('message', {
+      type: 'result',
+      id: nextId,
+      operation: 'titles',
+      value: { titles: [] }
+    })
+    await expect(next).resolves.toEqual({ titles: [] })
+    vi.advanceTimersByTime(2_000)
+    expect(child.killed).toBe(false)
+    client.dispose()
+  })
+
   it('drops a call cancelled before the child received it', async () => {
     vi.useFakeTimers()
     const { child, client } = setup()

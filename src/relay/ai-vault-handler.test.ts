@@ -27,6 +27,42 @@ afterEach(async () => {
 })
 
 describe('AiVaultHandler', () => {
+  it('passes the optional title-only hint through the relay', async () => {
+    const resolveSessionTitles = vi.fn().mockResolvedValue({ titles: [] })
+    const dispatcher = createMockDispatcher()
+    new AiVaultHandler(dispatcher.value, {
+      remoteHome: '/home/ada',
+      hostPlatform: getRemoteHostPlatform('linux-x64'),
+      service: {
+        listSessions: () => Promise.resolve(emptyResult()),
+        resolveSessionTitles
+      }
+    })
+
+    await dispatcher.call(SSH_AI_VAULT_RESOLVE_SESSION_TITLES_METHOD, {
+      requests: [
+        {
+          agent: 'claude',
+          sessionId: 'session-1',
+          transcriptPath: '/home/ada/session.jsonl',
+          titleOnly: true
+        }
+      ]
+    })
+
+    expect(resolveSessionTitles).toHaveBeenCalledWith(
+      [
+        {
+          agent: 'claude',
+          sessionId: 'session-1',
+          transcriptPath: '/home/ada/session.jsonl',
+          titleOnly: true
+        }
+      ],
+      undefined
+    )
+  })
+
   it('resolves an exact transcript title without invoking the broad scanner', async () => {
     const remoteHome = await makeTemporaryHome()
     const transcriptPath = join(remoteHome, 'session.jsonl')

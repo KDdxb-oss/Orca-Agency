@@ -75,4 +75,19 @@ describe('launchAgentTerminal startup follow-up', () => {
     expect(createTerminal).toHaveBeenCalledTimes(1)
     expect(sendFollowup).not.toHaveBeenCalled()
   })
+
+  it('keeps an automation launch out of the user tab graph', async () => {
+    const { runtime, createTerminal } = makeRuntime()
+
+    await runtime.launchAgentTerminal('id:repo-1::/home/me/app-feature', {
+      agent: 'claude',
+      prompt: 'run the scheduled check',
+      unlisted: true
+    })
+
+    expect(createTerminal).toHaveBeenCalledWith(
+      'id:repo-1::/home/me/app-feature',
+      expect.objectContaining({ deferMobileSessionPublish: true })
+    )
+  })
 })

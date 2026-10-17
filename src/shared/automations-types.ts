@@ -18,17 +18,7 @@ export type AutomationRunStatus =
   | 'dispatch_failed'
 export type AutomationRunTrigger = 'scheduled' | 'manual'
 
-/** Statuses a run can never leave; only these are safe to evict from history. */
-export function isFinalAutomationRunStatus(status: AutomationRunStatus): boolean {
-  return (
-    status === 'completed' ||
-    status === 'dispatch_failed' ||
-    status === 'skipped_precheck' ||
-    status === 'skipped_missed' ||
-    status === 'skipped_unavailable' ||
-    status === 'skipped_needs_interactive_auth'
-  )
-}
+export { isFinalAutomationRunStatus } from './automation-run-final-status'
 
 export type AutomationSchedulePreset = 'hourly' | 'daily' | 'weekdays' | 'weekly' | 'custom'
 export type AutomationRunUsageProvider = 'claude' | 'codex'
@@ -132,6 +122,7 @@ export type Automation = {
   missedRunGraceMinutes: number
   createdAt: number
   updatedAt: number
+  definitionRevision?: number
 }
 
 export type AutomationRun = {
@@ -144,8 +135,7 @@ export type AutomationRun = {
   status: AutomationRunStatus
   trigger: AutomationRunTrigger
   workspaceId: string | null
-  /** Why: run history must remain understandable after the backing workspace
-   *  is deleted and its live metadata is gone. */
+  /** Preserve the display name after its workspace is deleted. */
   workspaceDisplayName?: string | null
   sessionKind: 'terminal'
   chatSessionId: string | null
@@ -161,8 +151,8 @@ export type AutomationRun = {
   startedAt: number | null
   dispatchedAt: number | null
   createdAt: number
-  /** Why: run titles must stay unique once retention prunes old runs, so the
-   *  number can no longer be derived from how many runs are currently kept. */
+  definitionRevision?: number
+  /** Retained run numbers stay unique after old runs are pruned. */
   runNumber?: number
   /** Why: a target that cannot resolve refuses every occurrence, so consecutive
    *  identical refusals fold into this record instead of one row each. Counts the

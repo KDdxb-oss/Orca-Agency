@@ -3,6 +3,7 @@ import { createTestStore, makeWorktree, seedStore } from './store-test-helpers'
 
 const LEFT = 'repo1::/tmp/left'
 const RIGHT = 'repo1::/tmp/right'
+const MIDDLE = 'repo1::/tmp/middle'
 
 function pairedStore() {
   const store = createTestStore()
@@ -62,5 +63,35 @@ describe('closing tabs in a workspace split', () => {
     store.getState().closeUnifiedTab(right.id, { preserveWorktreeSelection: true })
 
     expect(store.getState().workspaceSplitGroups).toHaveLength(1)
+  })
+
+  it('removes only the emptied middle pane from a three-workspace split', () => {
+    const { store } = pairedStore()
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [
+          makeWorktree({ id: LEFT, repoId: 'repo1', path: '/tmp/left' }),
+          makeWorktree({ id: RIGHT, repoId: 'repo1', path: '/tmp/right' }),
+          makeWorktree({ id: MIDDLE, repoId: 'repo1', path: '/tmp/middle' })
+        ]
+      }
+    })
+    const middle = store.getState().createUnifiedTab(MIDDLE, 'editor', {
+      id: 'middle.md',
+      label: 'middle.md'
+    })
+    store.getState().placeWorkspaceAtEdge(MIDDLE, LEFT, 'right')
+    store.setState({ activeWorktreeId: MIDDLE })
+
+    store.getState().closeUnifiedTab(middle.id)
+
+    const groups = store.getState().workspaceSplitGroups
+    expect(groups).toHaveLength(1)
+    expect(JSON.stringify(groups)).toContain(LEFT)
+    expect(JSON.stringify(groups)).toContain(RIGHT)
+    expect(JSON.stringify(groups)).not.toContain(MIDDLE)
+    expect(store.getState().activeWorktreeId).toBe(LEFT)
+    expect(store.getState().unifiedTabsByWorktree[LEFT]).toHaveLength(1)
+    expect(store.getState().unifiedTabsByWorktree[RIGHT]).toHaveLength(1)
   })
 })

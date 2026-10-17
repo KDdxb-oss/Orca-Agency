@@ -98,6 +98,12 @@ export const TERMINAL_ACCESSORY_KEY_DEFINITIONS: TerminalAccessoryKey[] = [
   { id: 'escape', label: 'Esc', bytes: '\x1b', accessibilityLabel: 'Escape' },
   { id: 'tab', label: 'Tab', bytes: '\t', accessibilityLabel: 'Tab' },
   { id: 'enter', label: 'Enter', bytes: '\r', accessibilityLabel: 'Enter' },
+  {
+    id: 'shiftArrowLeft',
+    label: 'Shift+←',
+    bytes: '\x1b[1;2D',
+    accessibilityLabel: 'Shift Left Arrow'
+  },
   // Why: terminal apps recognize ESC [ Z as the reverse-tab sequence.
   { id: 'shiftTab', label: 'Shift+Tab', bytes: '\x1b[Z', accessibilityLabel: 'Shift Tab' },
   { id: 'space', label: 'Space', bytes: ' ', accessibilityLabel: 'Space' },

@@ -1,4 +1,5 @@
 import { openTranscriptReadStream } from '../native-chat/wsl-transcript-fs-access'
+import { throwIfAiVaultScanCancelled } from './ai-vault-scan-cancellation'
 import {
   MAX_SESSION_TRANSCRIPT_RECORD_BYTES,
   type SkippedTranscriptRecord
@@ -28,7 +29,9 @@ export async function consumeCompleteJsonlLines(args: {
   onLine: (line: string) => void
   onLineBytes?: (line: Buffer) => void
   shouldStop?: () => boolean
+  signal?: AbortSignal
 }): Promise<JsonlReadResult> {
+  throwIfAiVaultScanCancelled(args.signal)
   if (args.shouldStop?.()) {
     return {
       consumedThrough: args.start,
@@ -48,14 +51,16 @@ export async function consumeCompleteJsonlLines(args: {
   let discarding = false
   const skippedRecords: SkippedTranscriptRecord[] = []
 
-  const stream = openTranscriptReadStream(args.path, { start: args.start }, 'scan')
+  const stream = openTranscriptReadStream(args.path, { start: args.start }, 'scan', args.signal)
   let chunkStart = args.start
   for await (const chunk of stream as AsyncIterable<Buffer>) {
+    throwIfAiVaultScanCancelled(args.signal)
     bytesRead += chunk.length
     const chunkEnd = chunkStart + chunk.length
     let lineStart = 0
     let newlineIndex = chunk.indexOf(NEWLINE_BYTE, lineStart)
     while (newlineIndex !== -1) {
+      throwIfAiVaultScanCancelled(args.signal)
       const newlineOffset = chunkStart + newlineIndex
       const recordLength = newlineOffset - consumedThrough
       if (discarding || recordLength > MAX_SESSION_TRANSCRIPT_RECORD_BYTES) {
@@ -106,6 +111,8 @@ export async function consumeCompleteJsonlLines(args: {
     }
     chunkStart = chunkEnd
   }
+
+  throwIfAiVaultScanCancelled(args.signal)
 
   if (discarding) {
     // No terminator yet, so the record may still be growing: leave the cursor at

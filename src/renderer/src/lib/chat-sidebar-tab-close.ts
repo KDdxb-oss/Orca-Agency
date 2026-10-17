@@ -44,21 +44,26 @@ export function closedChatSidebarPatch(
   return { ...patch, completed, folderAssignments }
 }
 
-/** Capture before retirement erases provider metadata; persist after the synchronous close. */
-export function completeClosedChatTab(get: () => AppState, tabId: string): void {
-  const now = Date.now()
-  const closing = buildChatSidebarRows(get(), [], now, undefined, true).filter(
+/** Capture before retirement erases provider metadata; persist only after the close succeeds. */
+export function captureClosedChatTabCompletion(
+  get: () => AppState,
+  tabId: string
+): (() => void) | undefined {
+  const closing = buildChatSidebarRows(get(), [], Date.now(), undefined, true).filter(
     (row) => row.tabId === tabId
   )
   if (!closing.length) {
     return
   }
-  void updateChatSidebarSettings(get, (current) =>
-    closedChatSidebarPatch(
-      closing,
-      buildChatSidebarRows(get(), [], now, undefined, true),
-      current,
-      now
-    )
-  ).catch((error: unknown) => console.error('Could not save closed chat status', error))
+  return () => {
+    const now = Date.now()
+    void updateChatSidebarSettings(get, (current) =>
+      closedChatSidebarPatch(
+        closing,
+        buildChatSidebarRows(get(), [], now, undefined, true),
+        current,
+        now
+      )
+    ).catch((error: unknown) => console.error('Could not save closed chat status', error))
+  }
 }

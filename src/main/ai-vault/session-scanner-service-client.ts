@@ -145,7 +145,8 @@ export class AiVaultScannerServiceClient {
             child,
             call,
             () => this.active.get(call.lane) === call,
-            (error) => this.onFault(error)
+            (error) => this.onFault(error),
+            () => this.cancel(call)
           ),
         (error: Error) => {
           if (this.active.get(lane) !== call) {
@@ -164,8 +165,7 @@ export class AiVaultScannerServiceClient {
   /**
    * The index's own restart. A child indexing for the hold has no queued call to
    * bring it back, so without this a fault stops the indexing until an unrelated
-   * request happens to arrive. The restart delay and circuit bound it, exactly as
-   * they bound a queued call's start.
+   * request happens to arrive. The restart delay and circuit bound it.
    */
   private startSessionSearchChild(): void {
     if (this.disposed || !this.sessionSearch.holdsChild || this.child || this.readyWaiter) {
@@ -322,5 +322,3 @@ export class AiVaultScannerServiceClient {
     retireAiVaultServiceChild(child)
   }
 }
-
-export type { AiVaultServiceProcessFactory } from './session-scanner-service-client-state'

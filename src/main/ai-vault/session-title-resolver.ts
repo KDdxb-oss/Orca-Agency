@@ -14,6 +14,7 @@ function normalizeRequest(request: AiVaultSessionTitleRequest): AiVaultSessionTi
   if (!sessionId || sessionId.length > 512 || hasUnsafeProviderSessionIdChars(sessionId)) {
     return null
   }
+  const titleOnly = request.titleOnly === true ? { titleOnly: true as const } : {}
   const transcriptPath = request.transcriptPath?.trim()
   if (
     !transcriptPath ||
@@ -21,9 +22,9 @@ function normalizeRequest(request: AiVaultSessionTitleRequest): AiVaultSessionTi
     hasUnsafeProviderSessionIdChars(transcriptPath) ||
     extname(transcriptPath).toLowerCase() !== '.jsonl'
   ) {
-    return { agent: request.agent, sessionId }
+    return { agent: request.agent, sessionId, ...titleOnly }
   }
-  return { agent: request.agent, sessionId, transcriptPath }
+  return { agent: request.agent, sessionId, transcriptPath, ...titleOnly }
 }
 
 export async function resolveLocalAiVaultSessionTitles(
