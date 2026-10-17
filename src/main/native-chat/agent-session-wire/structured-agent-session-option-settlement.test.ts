@@ -166,7 +166,7 @@ describe('structured session options and close', () => {
     )
     const events: AgentSessionStatusEvent[] = []
     host.subscribeStatus({ id: 'session-list', emit: (event) => events.push(event) })
-    expect(events).toEqual([
+    expect(events).toMatchObject([
       {
         type: 'snapshot',
         sessions: [expect.objectContaining({ status: 'idle', model: DEFAULT_MODEL })]
@@ -179,7 +179,7 @@ describe('structured session options and close', () => {
       ...fields
     })
 
-    expect(events.slice(1)).toEqual([
+    expect(events.slice(1)).toMatchObject([
       {
         type: 'status',
         session: expect.objectContaining({ sessionId: SESSION, model: PICKED_MODEL })

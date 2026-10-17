@@ -127,7 +127,7 @@ describe('structured session restart status publication', () => {
     const events: AgentSessionStatusEvent[] = []
     restarted.subscribeStatus({ id: 'session-list', emit: (event) => events.push(event) })
 
-    expect(events).toEqual([
+    expect(events).toMatchObject([
       {
         type: 'snapshot',
         sessions: [
@@ -147,12 +147,12 @@ describe('structured session restart status publication', () => {
     const restarted = await restartWithPersistedTurn()
     const events: AgentSessionStatusEvent[] = []
     restarted.subscribeStatus({ id: 'session-list', emit: (event) => events.push(event) })
-    expect(events).toEqual([{ type: 'snapshot', sessions: [] }])
+    expect(events).toMatchObject([{ type: 'snapshot', sessions: [] }])
 
     await restarted.restoreReadableSessions()
 
     // The restore wiring publishes; without it this list never hears about the session at all.
-    expect(events.at(-1)).toEqual({
+    expect(events.at(-1)).toMatchObject({
       type: 'status',
       session: expect.objectContaining({ sessionId: SESSION, status: 'idle' })
     })

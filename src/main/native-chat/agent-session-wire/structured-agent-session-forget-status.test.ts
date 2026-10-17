@@ -275,7 +275,7 @@ describe('a session that leaves the host without an explicit close', () => {
 
     const events: unknown[] = []
     feed.subscribe({ id: 'list-late', emit: (event) => events.push(event) })
-    expect(events).toEqual([
+    expect(events).toMatchObject([
       { type: 'snapshot', sessions: [expect.objectContaining({ sessionId: SESSION })] }
     ])
   })

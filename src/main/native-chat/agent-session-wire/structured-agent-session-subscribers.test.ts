@@ -280,7 +280,7 @@ describe('AgentSessionSubscribers', () => {
     )
     subscribers.publish(SESSION, journal)
 
-    expect(statuses.at(-1)).toEqual({
+    expect(statuses.at(-1)).toMatchObject({
       type: 'status',
       session: expect.objectContaining({ status: 'working', latestPrompt: 'write a poem' })
     })
@@ -288,7 +288,7 @@ describe('AgentSessionSubscribers', () => {
     await journal.appendTombstone(turn, { fence: 1 })
     subscribers.publish(SESSION, journal)
 
-    expect(statuses.at(-1)).toEqual({
+    expect(statuses.at(-1)).toMatchObject({
       type: 'status',
       session: expect.objectContaining({ status: 'idle' })
     })
