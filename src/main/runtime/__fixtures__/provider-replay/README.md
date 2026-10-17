@@ -1,15 +1,17 @@
 # Provider replay fixtures
 
 Recorded provider sessions that `structured-provider-replay.test.ts` plays through Orca's shipped
-structured-session host, adapters and journal. Only the transport is fake
-(`structured-provider-replay-test-support.ts`).
+structured-session host, adapters, journal and real Claude stream-json / Codex app-server
+connections. Only the child process is fake: an in-memory one that reads what the connection
+writes to stdin and answers on stdout with the recorded frames
+(`structured-provider-replay-child-test-support.ts`).
 
-| Fixture | Provider | What it covers |
-| --- | --- | --- |
-| `claude-tool-call.ndjson` | Claude Agent SDK stream | One turn: a Bash tool call, then a final message |
-| `claude-subagent.ndjson` | Claude Agent SDK stream | Two `Agent` subagents (frames with `parent_tool_use_id`), then the root's final message |
-| `codex-tool-call.ndjson` | Codex app-server JSON-RPC | One turn: a `commandExecution`, then a final message |
-| `codex-subagent.ndjson` | Codex app-server JSON-RPC | A spawned child thread whose `turn/completed` lands before the root's |
+| Fixture                   | Provider                  | What it covers                                                                          |
+| ------------------------- | ------------------------- | --------------------------------------------------------------------------------------- |
+| `claude-tool-call.ndjson` | Claude Agent SDK stream   | One turn: a Bash tool call, then a final message                                        |
+| `claude-subagent.ndjson`  | Claude Agent SDK stream   | Two `Agent` subagents (frames with `parent_tool_use_id`), then the root's final message |
+| `codex-tool-call.ndjson`  | Codex app-server JSON-RPC | One turn: a `commandExecution`, then a final message                                    |
+| `codex-subagent.ndjson`   | Codex app-server JSON-RPC | A spawned child thread whose `turn/completed` lands before the root's                   |
 
 These four come from T3 Code's replay fixtures (pingdotgg/t3code @ `2fbd4318`,
 `apps/server/src/orchestration-v2/testkit/fixtures`). They are MIT licensed; see `LICENSE-t3code`.
@@ -21,8 +23,9 @@ One JSON object per line:
 - `transcript_start`: provider, protocol and version metadata.
 - `expect_outbound`: a frame the client sent. Claude: `prompt.offer` holds the prompt. Codex: a
   JSON-RPC request (`id`, `method`, `params`).
-- `emit_inbound`: a frame the provider sent. Claude: an Agent SDK message, exactly as `query()`
-  yields it. Codex: a JSON-RPC result (`id`, `result`) or notification (`method`, `params`).
+- `emit_inbound`: a frame the provider sent. Claude: a stream-json line the CLI wrote, written to
+  the fake child's stdout once Orca's user message arrives. Codex: a JSON-RPC result (`id`,
+  `result`), answered under the id of the matching request, or a notification (`method`, `params`).
 - `runtime_exit`: the provider process ended.
 
 The replayer swaps in the identities of the run it launched:

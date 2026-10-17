@@ -1,14 +1,10 @@
-// The Codex half of the provider replay: a fake app-server connection that answers each request
-// with its recorded result and plays the notifications recorded after it.
+// The Codex half of the provider replay: the real app-server connection, over an in-memory child
+// that answers each request with its recorded result and the notifications recorded after it.
 
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type {
-  CodexAppServerConnection,
-  CodexAppServerConnectionHandlers,
-  openCodexAppServerConnection
-} from '../codex/codex-app-server-connection'
+import { openCodexAppServerConnection } from '../codex/codex-app-server-connection'
 import { hostTestAttachParams } from '../native-chat/agent-session-wire/structured-agent-session-host-test-data'
 import { createStructuredAgentSessionLogger } from '../native-chat/agent-session-wire/structured-agent-session-logger'
 import {
@@ -18,12 +14,12 @@ import {
 import { installStructuredAgentTurnCheckpoints } from './structured-agent-session-turn-checkpoints'
 import {
   CALLER,
-  nextTick,
   operationId,
   readReplayTranscript,
   recordedPrompt,
   replayRecord,
   replayStatusStore,
+  replayString,
   resendPlayed,
   sendPrompt,
   subscribeStatuses,
@@ -31,6 +27,7 @@ import {
   type ReplayPlayOptions,
   type ReplaySend
 } from './structured-provider-replay-test-support'
+import { replayChildSpawn, replayUntil } from './structured-provider-replay-child-test-support'
 
 /** Codex echoes the `clientUserMessageId` a turn/start carried as its user item's `clientId`; a
  *  recorder that sent none left it null. */
@@ -54,83 +51,67 @@ export async function openCodexReplay(
 ): Promise<ProviderReplay> {
   const transcript = readReplayTranscript(fixture)
   const root = await mkdtemp(join(tmpdir(), 'orca-codex-replay-'))
-  // Each recorded request's result, keyed by method, and the notifications that followed it.
-  const results = new Map<string, unknown[]>()
-  const notificationsAfter = new Map<string, Record<string, unknown>[]>()
-  const methodById = new Map<unknown, string>()
-  let lastRequest = 'thread/start'
+  // The inbound frames recorded after each request, until the next one, queued by method.
+  const answers = new Map<string, Record<string, unknown>[][]>()
+  let answering: Record<string, unknown>[] | null = null
   for (const entry of transcript) {
     if (entry.type === 'expect_outbound' && typeof entry.frame.method === 'string') {
-      methodById.set(entry.frame.id, entry.frame.method)
-      // The fake replaces the handshake, so its notifications ride with the thread's start.
-      if (entry.frame.method !== 'initialize' && entry.frame.method !== 'initialized') {
-        lastRequest = entry.frame.method
+      if (entry.frame.id !== undefined) {
+        answering = []
+        answers.set(entry.frame.method, [...(answers.get(entry.frame.method) ?? []), answering])
       }
-    } else if (entry.type === 'emit_inbound' && 'result' in entry.frame) {
-      const method = methodById.get(entry.frame.id)
-      if (method) {
-        results.set(method, [...(results.get(method) ?? []), entry.frame.result])
-      }
-    } else if (entry.type === 'emit_inbound' && typeof entry.frame.method === 'string') {
-      notificationsAfter.set(lastRequest, [
-        ...(notificationsAfter.get(lastRequest) ?? []),
-        entry.frame
-      ])
+    } else if (entry.type === 'emit_inbound') {
+      answering?.push(entry.frame)
     }
   }
-  let handlers: CodexAppServerConnectionHandlers = {}
+  const total = transcript.filter(
+    (entry) => entry.type === 'emit_inbound' && typeof entry.frame.method === 'string'
+  ).length
   let clientUserMessageId: unknown = null
-  const emitted = new Set<string>()
   let playing: Promise<void> = Promise.resolve()
   let playOptions: ReplayPlayOptions = {}
   let turnStarts = 0
-  const total = [...notificationsAfter.values()].reduce((sum, list) => sum + list.length, 0)
-  let delivered = 0
-  const emitAfter = (method: string): void => {
-    if (emitted.has(method)) {
+  let written = 0
+  let notified = 0
+  const spawnImpl = replayChildSpawn((frame, write) => {
+    const method = replayString(frame.method)
+    // Orca's notifications and its answers to server requests need no reply.
+    if (method === undefined || frame.id === undefined) {
       return
     }
-    emitted.add(method)
-    const notifications = notificationsAfter.get(method) ?? []
+    if (method === 'turn/start') {
+      turnStarts += 1
+      clientUserMessageId = replayRecord(frame.params)?.clientUserMessageId
+    }
+    const recorded = answers.get(method)?.shift() ?? [
+      { id: frame.id, result: method === 'model/list' ? { data: [], nextCursor: null } : {} }
+    ]
     playing = playing.then(async () => {
-      for (const notification of notifications) {
-        await nextTick()
-        handlers.onNotification?.(
-          String(notification.method),
-          withSendEcho(notification.params, clientUserMessageId)
-        )
-        await playOptions.afterFrame?.(delivered++, total)
+      for (const inbound of recorded) {
+        if (typeof inbound.method !== 'string') {
+          // The recorded answer, under the id this run's request actually carried.
+          write({ ...inbound, id: frame.id })
+          continue
+        }
+        const index = written++
+        write({ ...inbound, params: withSendEcho(inbound.params, clientUserMessageId) })
+        await replayUntil(() => notified > index)
+        await playOptions.afterFrame?.(index, total)
       }
     })
-  }
-  const openConnection: typeof openCodexAppServerConnection = async (
-    _launch,
-    connectionHandlers = {}
-  ) => {
-    handlers = connectionHandlers
-    const connection: CodexAppServerConnection = {
-      pid: 4321,
-      closed: false,
-      request: async (method, params) => {
-        if (method === 'turn/start') {
-          turnStarts += 1
-          clientUserMessageId = replayRecord(params)?.clientUserMessageId
+  })
+  const openConnection: typeof openCodexAppServerConnection = (launch, handlers = {}) =>
+    openCodexAppServerConnection(
+      launch,
+      {
+        ...handlers,
+        onNotification: (method, params) => {
+          handlers.onNotification?.(method, params)
+          notified += 1
         }
-        const recorded = results.get(method)?.shift()
-        if (method !== 'turn/start' && method !== 'thread/start') {
-          return recorded ?? (method === 'model/list' ? { data: [], nextCursor: null } : {})
-        }
-        // After the answer is read, as the real channel orders them.
-        setImmediate(() => emitAfter(method))
-        return recorded ?? {}
       },
-      notify: () => {},
-      respond: () => {},
-      respondWithError: () => {},
-      close: async () => true
-    }
-    return connection
-  }
+      spawnImpl
+    )
   const { store, statusSink } = replayStatusStore()
   const host = await ensureStructuredAgentSessionHost({
     statusSink,
@@ -166,10 +147,14 @@ export async function openCodexReplay(
     play: async (options = {}) => {
       playOptions = options
       played = await sendPrompt(host, sessionId, recordedPrompt(transcript))
-      while (!emitted.has('turn/start')) {
-        await nextTick()
+      await replayUntil(() => turnStarts > 0)
+      // Each answer can queue more; done once the queue stops growing.
+      for (let tail = playing; ; tail = playing) {
+        await tail
+        if (tail === playing) {
+          break
+        }
       }
-      await playing
     },
     resend: () => resendPlayed(host, played),
     dispatches: () => turnStarts,

@@ -1,7 +1,7 @@
-// Recorded provider sessions played back through the shipped structured-session host. Only the
-// transport is fake: a Claude transcript's inbound frames reach the adapter exactly as the Agent
-// SDK yields them, and a Codex transcript's JSON-RPC results and notifications reach it exactly as
-// the app-server connection hands them over (Codex: `structured-codex-replay-test-support.ts`).
+// Recorded provider sessions played back through the shipped structured-session host, its real
+// Claude stream-json and Codex app-server connections included. Only the child process is fake:
+// an in-memory one that answers what the connection writes with the recorded stdout frames
+// (`structured-provider-replay-child-test-support.ts`; Codex: `structured-codex-replay-test-support.ts`).
 // Transcript format and fixtures: see
 // `__fixtures__/provider-replay/README.md`.
 
@@ -14,7 +14,10 @@ import type { AgentStatusState } from '../../shared/agent-status-types'
 import { structuredAgentSessionAgentStatus } from '../../shared/structured-agent-session-agent-status'
 import { hostTestMessage } from '../native-chat/agent-session-wire/structured-agent-session-host-test-data'
 import type { StructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-host'
+import { openClaudeStreamJsonConnection } from '../claude/claude-stream-json-connection'
 import { createScriptedClaudeRuntime } from './structured-claude-scripted-runtime-test-support'
+import { replayUntil } from './structured-provider-replay-child-test-support'
+import { createClaudeReplayCli } from './structured-claude-replay-cli-test-support'
 import { AgentHookServer } from '../agent-hooks/server'
 import type { StructuredAgentSessionStatusSink } from '../native-chat/agent-session-wire/structured-agent-session-status-feed'
 
@@ -224,80 +227,53 @@ export function replayStatusStore(): {
 
 export const nextTick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
-/** Rewrites the recorded provider session id to the one this run launched, so the adapter's
- *  ownership check reads the frames as its own. */
-function withSessionId(value: unknown, from: string, to: string): unknown {
-  if (Array.isArray(value)) {
-    return value.map((entry) => withSessionId(entry, from, to))
-  }
-  if (typeof value === 'object' && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, withSessionId(entry, from, to)])
-    )
-  }
-  return value === from ? to : value
-}
-
 export async function openClaudeReplay(fixture: string): Promise<ProviderReplay> {
   const transcript = readReplayTranscript(fixture)
   const sessionId = `replay-${fixture.replace(/\W+/g, '-')}`
-  const providerSessionId = claudeSessionIdForOrcaSession(sessionId)
+  const prompt = recordedPrompt(transcript)
+  let played: ReplaySend | null = null
+  let playOptions: ReplayPlayOptions = {}
+  const cli = createClaudeReplayCli({
+    frames: transcript.flatMap((entry) => (entry.type === 'emit_inbound' ? [entry.frame] : [])),
+    providerSessionId: claudeSessionIdForOrcaSession(sessionId),
+    prompt,
+    afterFrame: (index, total) => playOptions.afterFrame?.(index, total)
+  })
   const claude = createScriptedClaudeRuntime([sessionId])
   const { store, statusSink } = replayStatusStore()
-  const host = await claude.install({ statusSink })
+  const host = await claude.install({
+    statusSink,
+    openClaudeConnection: (launch, handlers = {}) =>
+      openClaudeStreamJsonConnection(
+        launch,
+        {
+          ...handlers,
+          onMessage: (message) => {
+            handlers.onMessage?.(message)
+            cli.delivered()
+          }
+        },
+        cli.spawnImpl
+      )
+  })
   const attached = await host.attach(CALLER, claude.attachParams(sessionId, null))
   if (!attached.ok) {
     throw new Error(`replay attach refused: ${JSON.stringify(attached.refusal)}`)
   }
   const statuses = subscribeStatuses(host, sessionId)
-  const frames = transcript.flatMap((entry) => (entry.type === 'emit_inbound' ? [entry.frame] : []))
-  const recordedSessionId = frames
-    .map((frame) => replayString(frame.session_id))
-    .find((id) => id !== undefined)
-  let played: ReplaySend | null = null
-  let dispatches = 0
   return {
     host,
     sessionId,
     statuses,
     statusStore: store,
     play: async (options = {}) => {
-      const child = claude.child(sessionId)
-      const sent = Promise.withResolvers<Record<string, unknown>>()
-      child.connection.send = async (message, beforeDispatch) => {
-        await beforeDispatch?.()
-        dispatches += 1
-        sent.resolve(message)
-      }
-      const prompt = recordedPrompt(transcript)
+      playOptions = options
       played = await sendPrompt(host, sessionId, prompt)
-      const sentUuid = String((await sent.promise).uuid)
-      // The CLI replays Orca's own send back (--replay-user-messages); a recorder that sent
-      // without it left no echo, and its command uuid was its own.
-      const recordedCommand = frames
-        .map((frame) => replayString(frame.command_uuid))
-        .find((id) => id !== undefined)
-      const echo = {
-        type: 'user',
-        parent_tool_use_id: null,
-        session_id: providerSessionId,
-        uuid: sentUuid,
-        message: { role: 'user', content: [{ type: 'text', text: prompt }] }
-      }
-      for (const [index, frame] of [echo, ...frames].entries()) {
-        let replayed: unknown = recordedSessionId
-          ? withSessionId(frame, recordedSessionId, providerSessionId)
-          : frame
-        if (recordedCommand) {
-          replayed = withSessionId(replayed, recordedCommand, sentUuid)
-        }
-        child.handlers.onMessage?.(replayRecord(replayed) ?? {})
-        await nextTick()
-        await options.afterFrame?.(index, frames.length + 1)
-      }
+      await replayUntil(() => cli.dispatches() > 0)
+      await cli.playing()
     },
     resend: () => resendPlayed(host, played),
-    dispatches: () => dispatches,
+    dispatches: cli.dispatches,
     dispose: () => claude.dispose()
   }
 }
