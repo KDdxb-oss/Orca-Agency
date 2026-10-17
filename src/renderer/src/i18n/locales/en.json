@@ -19057,6 +19057,7 @@
         "changes": "Changes",
         "loading": "Loading changes…",
         "loadFailed": "Couldn't load this turn's changes.",
+        "unverifiedStart": "This turn's starting point wasn't saved, so these changes are measured from the last commit and may include earlier edits.",
         "trigger": "Show this agent's result",
         "triggerShort": "Result"
       }

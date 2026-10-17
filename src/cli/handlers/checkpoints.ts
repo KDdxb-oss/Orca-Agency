@@ -18,6 +18,7 @@ function formatDiff({ diff }: { diff: AgentTurnCheckpointDiff | null }): string 
   return [
     `turn: ${diff.turnId}`,
     `files: ${diff.fileCount} (+${diff.added} -${diff.removed})${diff.truncated ? ' (truncated)' : ''}`,
+    ...(diff.rollbackable ? [] : ['start not saved: measured from HEAD, rollback unavailable']),
     ...diff.files.map(
       (file) =>
         `+${count(file.added)} -${count(file.removed)}\t${file.oldPath ? `${file.oldPath} -> ` : ''}${file.path}`

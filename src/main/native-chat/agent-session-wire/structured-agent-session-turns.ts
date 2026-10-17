@@ -211,12 +211,16 @@ export async function handOverSubmission(
     return
   }
   // The message joins the turn running at handover, a steer, or opens its own.
+  const turnScope = ctx.journal.liveTurnScope()
   await ctx.journal.resolveDispatch({
     clientMessageId,
     state: 'pending',
     fence: ctx.fence,
-    turnScope: ctx.journal.liveTurnScope()
+    turnScope
   })
+  if (turnScope.kind !== 'turn') {
+    await ctx.beforeTurnDispatch?.()
+  }
   // The handover row's instant on the host clock; the turn this dispatch opens records it so the
   // live counter never re-anchors at turn-open.
   const outcome = await dispatchSafely(

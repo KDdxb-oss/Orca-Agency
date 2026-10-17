@@ -44,27 +44,23 @@ describe('structured turn checkpoints', () => {
     replay = opened
     let edited = false
 
-    const looseObjects = (): number =>
-      Number(/^count: (\d+)/m.exec(git('count-objects', '-v'))?.[1] ?? 0)
-    const objectsBefore = looseObjects()
-
     await opened.play({
-      afterFrame: async (index, total) => {
-        if (edited || index < Math.floor(total / 2)) {
+      afterFrame: () => {
+        if (edited || opened.dispatches() === 0) {
           return
         }
         edited = true
-        // A real agent's first edit lands seconds after the send; here, once the turn's start
-        // snapshot (a blob, a tree and a commit) is written.
-        await vi.waitFor(() => expect(looseObjects()).toBeGreaterThanOrEqual(objectsBefore + 3))
+        // The provider's first frame after it took the turn: its start snapshot already exists.
         writeFileSync(join(workspace, 'agent.ts'), 'export const done = true\n')
       }
     })
 
     const refs = (): string => git('for-each-ref', '--format=%(refname)', 'refs/orca/checkpoints')
     await vi.waitFor(() => expect(refs()).toMatch(/^refs\/orca\/checkpoints\/[^/]+\/[^/]+$/))
+    expect(edited).toBe(true)
     const diff = await readAgentTurnCheckpointDiff({ cwd: workspace, sessionId: opened.sessionId })
     expect(diff?.files).toEqual([{ path: 'agent.ts', added: 1, removed: 0 }])
+    expect(diff?.rollbackable).toBe(true)
     // The user's own index and worktree are as they left them.
     expect(git('status', '--porcelain').split('\n').sort()).toEqual([
       '?? agent.ts',

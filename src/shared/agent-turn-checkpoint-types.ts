@@ -25,8 +25,15 @@ export type AgentTurnCheckpointDiff = {
   removed: number
   /** More files than listed, or a patch larger than 1 MB. */
   truncated: boolean
+  /** False when the turn's start went unseen: it is measured from HEAD, so it may include the
+   *  user's earlier uncommitted work, and rollback refuses it. */
+  rollbackable: boolean
 }
 
 export type AgentTurnCheckpointRollback =
   | { ok: true; restored: number }
-  | { ok: false; reason: 'no-checkpoint' | 'changed-since-turn' | 'head-moved'; message: string }
+  | {
+      ok: false
+      reason: 'no-checkpoint' | 'no-baseline' | 'changed-since-turn' | 'head-moved'
+      message: string
+    }

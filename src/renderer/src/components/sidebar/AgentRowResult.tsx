@@ -85,7 +85,8 @@ function openDiffOrToast(worktreeId: string, diff: AgentTurnCheckpointDiff, path
   )
 }
 
-/** A structured chat's latest turn checkpoint, read once the panel opens. */
+/** A structured chat's completed turn checkpoint, read once the panel opens; the host answers
+ *  after that turn's capture is written, so an early open waits instead of reading an older turn. */
 function useAgentTurnDiff(agent: DashboardAgentRowData): DiffLoad {
   // A structured chat's row carries its chat tab's id; the session is that tab's entity.
   const tab = useAppStore((state) =>
@@ -222,7 +223,17 @@ export function AgentRowResultPanel({
               )}
             </p>
           ) : (
-            <AgentRowResultFiles worktreeId={agent.tab.worktreeId} diff={load.diff} />
+            <>
+              {load.diff.rollbackable ? null : (
+                <p className="text-xs text-muted-foreground">
+                  {translate(
+                    'components.sidebar.agentResult.unverifiedStart',
+                    "This turn's starting point wasn't saved, so these changes are measured from the last commit and may include earlier edits."
+                  )}
+                </p>
+              )}
+              <AgentRowResultFiles worktreeId={agent.tab.worktreeId} diff={load.diff} />
+            </>
           )}
         </section>
       )}

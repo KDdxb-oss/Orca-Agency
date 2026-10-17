@@ -12,7 +12,10 @@ import {
   type StructuredAgentSessionConversationOpenOptions
 } from './structured-agent-session-conversation-open'
 import type { StructuredAgentSessionClientDelivery } from './structured-agent-session-client-delivery'
-import { StructuredAgentSessionDeliveryLoop } from './structured-agent-session-delivery-loop'
+import {
+  StructuredAgentSessionDeliveryLoop,
+  type StructuredAgentSessionDeliveryLoopDeps
+} from './structured-agent-session-delivery-loop'
 import { structuredAgentSessionCommandRunning } from './structured-agent-session-command-turn'
 import type { StructuredAgentSessionResumeOutcome } from './structured-agent-session-agent-start'
 import type {
@@ -59,6 +62,7 @@ export function createStructuredAgentSessionConversationDelivery(input: {
   ) => Promise<StructuredAgentSessionResumeOutcome>
   /** Stops a child that reported it is not signed in, so the start after it reads a new login. */
   stopSignedOutAgent: (sessionId: string) => Promise<void>
+  beforeTurnDispatch: StructuredAgentSessionDeliveryLoopDeps['beforeTurnDispatch']
   clientDelivery: Pick<
     StructuredAgentSessionClientDelivery,
     'publishRestored' | 'readChildWork' | 'readStopping' | 'publishStatus'
@@ -111,6 +115,7 @@ export function createStructuredAgentSessionConversationDelivery(input: {
     record: (sessionId) => deps.store.getRecord(sessionId),
     readChildWork: input.clientDelivery.readChildWork,
     stopping: input.clientDelivery.readStopping,
+    beforeTurnDispatch: input.beforeTurnDispatch,
     now: () => deps.now?.() ?? Date.now()
   })
   const adoptOpened = async (

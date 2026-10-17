@@ -115,6 +115,7 @@ describe('AgentRowResult', () => {
       added: 4,
       removed: 1,
       truncated: true,
+      rollbackable: true,
       files: [
         { path: 'a.ts', added: 3, removed: 1 },
         { path: 'b.ts', added: 1, removed: 0 }
@@ -128,9 +129,42 @@ describe('AgentRowResult', () => {
     expect(panel.textContent).toContain('Fixed.')
     expect(panel.textContent).toContain('3 changed files')
     expect(panel.textContent).toContain('Open full diff')
+    expect(panel.textContent).not.toContain('starting point')
     expect([...panel.querySelectorAll('li')].map((item) => item.textContent)).toEqual([
       expect.stringContaining('a.ts'),
       expect.stringContaining('b.ts')
     ])
+  })
+
+  it('waits for a capture still being written, then flags a turn measured from HEAD', async () => {
+    store.state.unifiedTabsByWorktree = {
+      'wt-1': [{ id: 'tab-1', contentType: 'structured', entityId: 'session-1' }]
+    }
+    let answer: (diff: AgentTurnCheckpointDiff) => void = () => {}
+    readDiff.mockReturnValue(
+      new Promise<AgentTurnCheckpointDiff>((resolve) => {
+        answer = resolve
+      })
+    )
+    const panel = await render(<AgentRowResultPanel agent={makeAgent()} />)
+    expect(panel.textContent).toContain('Loading changes…')
+
+    await act(async () =>
+      answer({
+        sessionId: 'session-1',
+        turnId: 'turn-2',
+        ref: 'refs/orca/checkpoints/session-1/turn-2',
+        commit: 'def456',
+        fileCount: 1,
+        added: 1,
+        removed: 0,
+        truncated: false,
+        rollbackable: false,
+        files: [{ path: 'c.ts', added: 1, removed: 0 }]
+      })
+    )
+    expect(panel.textContent).not.toContain('Loading changes…')
+    expect(panel.textContent).toContain('1 changed file')
+    expect(panel.textContent).toContain("This turn's starting point wasn't saved")
   })
 })

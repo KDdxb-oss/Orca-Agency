@@ -67,6 +67,8 @@ export type StructuredAgentSessionDeliveryLoopDeps = {
   readChildWork: (sessionId: string) => readonly AgentChildWorkView[] | undefined
   /** A person's Stop is still ending the session's work: the status feed's own reading. */
   stopping: (sessionId: string) => boolean
+  /** Awaited before a send that opens a turn is written to the provider. */
+  beforeTurnDispatch?: (sessionId: string) => Promise<void>
   now: () => number
 }
 
@@ -267,11 +269,25 @@ export class StructuredAgentSessionDeliveryLoop {
         failureTextContext: this.deps.failureTextContext(sessionId),
         record: () => this.deps.record(sessionId),
         childWork: () => this.deps.readChildWork(sessionId),
+        beforeTurnDispatch: () => this.beforeTurnDispatch(sessionId),
         now: this.deps.now
       },
       next
     )
     return 'continue'
+  }
+
+  /** A failed barrier costs the turn its checkpoint, never its send. */
+  private async beforeTurnDispatch(sessionId: string): Promise<void> {
+    try {
+      await this.deps.beforeTurnDispatch?.(sessionId)
+    } catch (error) {
+      this.deps.logger.warn('turn dispatch barrier failed', {
+        scope: 'turn-dispatch-barrier',
+        sessionId,
+        error
+      })
+    }
   }
 
   /** A start the session refused, as the failure every queued message it was for is rejected with. */

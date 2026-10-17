@@ -1,7 +1,15 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   AGENT_TURN_CHECKPOINT_MAX_FILES,
@@ -10,9 +18,9 @@ import {
   listAgentTurnCheckpoints,
   parseNumstatZ,
   readAgentTurnCheckpointDiff,
-  readAgentTurnCheckpointFile,
-  rollbackAgentTurnCheckpoint
+  readAgentTurnCheckpointFile
 } from './agent-turn-checkpoint'
+import { rollbackAgentTurnCheckpoint } from './agent-turn-checkpoint-rollback'
 
 let repo: string
 
@@ -32,6 +40,31 @@ beforeEach(() => {
 })
 
 afterEach(() => rmSync(repo, { recursive: true, force: true }))
+
+/** Every file outside .git with its content, the index entries and status: a refusal changes none. */
+function repoState(): string {
+  const files: string[] = []
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.name === '.git') {
+        continue
+      }
+      if (entry.isDirectory()) {
+        walk(path)
+      } else {
+        files.push(`${relative(repo, path)}=${readFileSync(path, 'utf8')}`)
+      }
+    }
+  }
+  walk(repo)
+  return [...files.sort(), git('ls-files', '-s'), git('status', '--porcelain', '--ignored')].join(
+    '\n'
+  )
+}
+
+const rollback = (): ReturnType<typeof rollbackAgentTurnCheckpoint> =>
+  rollbackAgentTurnCheckpoint({ cwd: repo, sessionId: 'session-1', turnId: 'turn-1' })
 
 /** Runs one agent turn: baseline, the edits, then the end checkpoint. */
 async function turn(turnId: string, edit: () => void): Promise<string | null> {
@@ -142,6 +175,84 @@ describe('agent turn checkpoints', () => {
       rollbackAgentTurnCheckpoint({ cwd: repo, sessionId: 'session-1', turnId: 'turn-1' })
     ).resolves.toMatchObject({ ok: false, reason: 'changed-since-turn' })
     expect(readFileSync(join(repo, 'kept.txt'), 'utf8')).toBe('agent\nthen the user\n')
+    expect(git('status', '--porcelain')).toBe('M kept.txt')
+  })
+
+  it('refuses a rollback when only the staged state changed after the turn, changing nothing', async () => {
+    await turn('turn-1', () => writeFileSync(join(repo, 'kept.txt'), 'agent\n'))
+    // Staged something else, then put the worktree back as the turn left it.
+    writeFileSync(join(repo, 'kept.txt'), 'staged by the user\n')
+    git('add', 'kept.txt')
+    writeFileSync(join(repo, 'kept.txt'), 'agent\n')
+    const before = repoState()
+
+    await expect(rollback()).resolves.toMatchObject({ ok: false, reason: 'changed-since-turn' })
+    expect(repoState()).toBe(before)
+  })
+
+  it('refuses a rollback over an ignored file made where the turn deleted one, changing nothing', async () => {
+    writeFileSync(join(repo, '.gitignore'), 'gone.txt\n')
+    git('add', '.gitignore')
+    git('commit', '-q', '-m', 'ignore')
+    // The agent stages the deletion, so the path is untracked and ignored from then on.
+    await turn('turn-1', () => git('rm', '-q', 'gone.txt'))
+    writeFileSync(join(repo, 'gone.txt'), 'the user made this after the turn\n')
+    const before = repoState()
+
+    await expect(rollback()).resolves.toMatchObject({ ok: false, reason: 'changed-since-turn' })
+    expect(repoState()).toBe(before)
+  })
+
+  it("marks a turn whose start went unseen and never rolls it back over the user's work", async () => {
+    // Uncommitted user work that HEAD knows nothing about.
+    writeFileSync(join(repo, 'kept.txt'), 'the user\n')
+    writeFileSync(join(repo, 'notes.txt'), 'mine\n')
+    writeFileSync(join(repo, 'agent.ts'), 'a\n')
+    await captureAgentTurnCheckpoint({
+      cwd: repo,
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      baseline: null
+    })
+    const before = repoState()
+
+    const diff = await readAgentTurnCheckpointDiff({ cwd: repo, sessionId: 'session-1' })
+    expect(diff).toMatchObject({ turnId: 'turn-1', rollbackable: false })
+    await expect(rollback()).resolves.toMatchObject({ ok: false, reason: 'no-baseline' })
+    expect(repoState()).toBe(before)
+  })
+
+  it('lists turns finished within one second in the order they finished', async () => {
+    const ids = ['t-c', 't-a', 't-e', 't-b', 't-d']
+    for (const [index, id] of ids.entries()) {
+      await turn(id, () => writeFileSync(join(repo, `${id}.txt`), `${index}\n`))
+    }
+    expect(
+      (await listAgentTurnCheckpoints(repo, 'session-1')).map((entry) => entry.turnId)
+    ).toEqual(ids)
+    await expect(
+      readAgentTurnCheckpointDiff({ cwd: repo, sessionId: 'session-1' })
+    ).resolves.toMatchObject({ turnId: 't-d', rollbackable: true })
+  })
+
+  it('skips a WSL worktree like a folder outside git, without running git', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    try {
+      const cwd = '\\\\wsl.localhost\\Ubuntu\\home\\me\\repo'
+      await expect(captureAgentTurnBaseline(cwd)).resolves.toBeNull()
+      await expect(
+        captureAgentTurnCheckpoint({ cwd, sessionId: 's', turnId: 't', baseline: null })
+      ).resolves.toBeNull()
+      await expect(readAgentTurnCheckpointDiff({ cwd, sessionId: 's' })).resolves.toBeNull()
+      await expect(
+        rollbackAgentTurnCheckpoint({ cwd, sessionId: 's', turnId: 't' })
+      ).resolves.toMatchObject({ ok: false, reason: 'no-checkpoint' })
+    } finally {
+      if (platform) {
+        Object.defineProperty(process, 'platform', platform)
+      }
+    }
   })
 
   it('refuses a rollback when the branch moved since the turn', async () => {

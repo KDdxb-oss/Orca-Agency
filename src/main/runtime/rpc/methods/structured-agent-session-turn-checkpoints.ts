@@ -1,14 +1,18 @@
 // `agentSession.turnCheckpoint*` — a structured session's per-turn git checkpoints: which files a
 // turn changed, each file's two sides, and rolling the worktree back to before the turn. Run on the
 // execution host, where the session's worktree is. A folder outside git has none, never an error.
+// A diff with no turn named is the turn this host last saw complete, read once its capture is done.
 
 import {
   listAgentTurnCheckpoints,
   readAgentTurnCheckpointDiff,
-  readAgentTurnCheckpointFile,
-  rollbackAgentTurnCheckpoint
+  readAgentTurnCheckpointFile
 } from '../../../git/agent-turn-checkpoint'
-import { structuredAgentSessionDirectory } from '../../structured-agent-session-turn-checkpoints'
+import { rollbackAgentTurnCheckpoint } from '../../../git/agent-turn-checkpoint-rollback'
+import {
+  settledStructuredAgentTurnCheckpoint,
+  structuredAgentSessionDirectory
+} from '../../structured-agent-session-turn-checkpoints'
 import { OptionsParams } from '../../../../shared/rpc-contract/structured-agent-session-params'
 import {
   TurnCheckpointDiffParams,
@@ -40,8 +44,18 @@ export const STRUCTURED_AGENT_SESSION_TURN_CHECKPOINT_METHODS = [
     permission: 'workspace',
     params: TurnCheckpointDiffParams,
     handler: async (params, ctx) => {
-      const cwd = await sessionDirectory(ctx, params.sessionId)
-      return { diff: cwd ? await readAgentTurnCheckpointDiff({ cwd, ...params }) : null }
+      const host = await requireInstalledStructuredHost(ctx, params.sessionId)
+      const cwd = await structuredAgentSessionDirectory(host, params.sessionId)
+      if (!cwd) {
+        return { diff: null }
+      }
+      // A turn that just completed may still be writing its checkpoint; with no turn named, read
+      // that turn by id, never whichever older one is newest so far.
+      const completed = await settledStructuredAgentTurnCheckpoint(host, params.sessionId)
+      const turnId = params.turnId ?? completed
+      return {
+        diff: await readAgentTurnCheckpointDiff({ cwd, ...params, ...(turnId ? { turnId } : {}) })
+      }
     }
   }),
   defineMethod({

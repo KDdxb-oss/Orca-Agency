@@ -92,6 +92,8 @@ export class StructuredAgentSessionHost {
   private readonly backgroundTasks: StructuredAgentSessionBackgroundTaskChannel
   /** Public because the RPC surface addresses it directly; see the restart-resume collaborator. */
   readonly restartResume: StructuredAgentSessionRestartResume
+  /** Awaited before a send that opens a turn reaches the provider; a failure is logged, never the send's. */
+  turnDispatchBarrier: ((sessionId: string) => Promise<void>) | null = null
 
   constructor(readonly deps: StructuredAgentSessionHostDeps) {
     // Every collaborator reads this copy, so a logger that throws cannot fail what it reports.
@@ -126,6 +128,7 @@ export class StructuredAgentSessionHost {
         agentStart.ensureStructuredAgentSessionAgent(this.attachContext(), sessionId, startedFor),
       // Put to rest like an idle agent: the stop writes nothing, and the next start is new.
       stopSignedOutAgent: (id) => this.lifetime.stopAgent(id, { cause: 'evict', resting: true }),
+      beforeTurnDispatch: async (sessionId) => this.turnDispatchBarrier?.(sessionId),
       clientDelivery: this.clientDelivery
     })
     this.restore = reveal.createStructuredAgentSessionHostRestore(deps, {

@@ -143,6 +143,8 @@ export type StructuredAgentSessionCommandHandoverContext = {
   record: () => AgentSessionRecord | null
   /** The session's child records, the same read the strip and conversation-command admission use. */
   childWork: () => readonly AgentChildWorkView[] | undefined
+  /** Awaited before a message that opens a turn (not a steer) is dispatched; never rejects. */
+  beforeTurnDispatch?: () => Promise<void>
   now: () => number
 }
 
