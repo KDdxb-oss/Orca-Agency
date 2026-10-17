@@ -229,7 +229,9 @@ export function createScriptedClaudeRuntime(sessionIds: readonly string[]) {
     },
     children: (sessionId: string): ScriptedClaudeChild[] =>
       children.filter((entry) => entry.sessionId === sessionId),
-    install: async (): Promise<StructuredAgentSessionHost> => {
+    install: async (
+      extra: Pick<Parameters<typeof ensureStructuredAgentSessionHost>[0], 'statusSink'> = {}
+    ): Promise<StructuredAgentSessionHost> => {
       root = await mkdtemp(join(tmpdir(), 'orca-scripted-claude-runtime-'))
       await mkdir(join(root, 'claude-home'), { recursive: true })
       const directory = root
@@ -243,7 +245,8 @@ export function createScriptedClaudeRuntime(sessionIds: readonly string[]) {
         resolveLaunchArgs: () => [],
         resolveClaudeAuthPolicy: () => ({ stripAuthEnv: false }),
         openClaudeConnection: openConnection,
-        readProcessStartTime
+        readProcessStartTime,
+        ...extra
       })
       return host
     },

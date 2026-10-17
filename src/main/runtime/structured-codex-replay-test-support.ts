@@ -21,6 +21,7 @@ import {
   operationId,
   readReplayTranscript,
   recordedPrompt,
+  replayStatusStore,
   resendPlayed,
   sendPrompt,
   subscribeStatuses,
@@ -118,7 +119,9 @@ export async function openCodexReplay(fixture: string): Promise<ProviderReplay> 
     }
     return connection
   }
+  const { store, statusSink } = replayStatusStore()
   const host = await ensureStructuredAgentSessionHost({
+    statusSink,
     logger: createStructuredAgentSessionLogger(),
     stateDirectory: root,
     hostId: 'local',
@@ -144,6 +147,7 @@ export async function openCodexReplay(fixture: string): Promise<ProviderReplay> 
     host,
     sessionId,
     statuses,
+    statusStore: store,
     play: async (options = {}) => {
       playOptions = options
       played = await sendPrompt(host, sessionId, recordedPrompt(transcript))

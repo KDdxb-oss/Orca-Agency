@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentJournalRenderItem } from './agent-session-journal-types'
 import {
+  activeStructuredAgentSessionTurnId,
   statusStructuredAgentSessionToolCall,
   isStructuredAgentSessionThinking
 } from './structured-agent-session-live-turn'
@@ -250,5 +251,28 @@ describe("the live-turn readers answer for the session's own agent", () => {
     expect(
       statusStructuredAgentSessionToolCall([turnStart, spawnCall, legacyChildCall])?.name
     ).toBe('Grep')
+  })
+})
+
+describe('activeStructuredAgentSessionTurnId', () => {
+  const rootTurn = item('root-turn', 1, {
+    kind: 'turn',
+    turnId: 'turn-root',
+    state: 'running',
+    startedAt: 1
+  })
+
+  it("keeps the root turn running past a child-linked turn row's completion", () => {
+    const childTurn: AgentJournalRenderItem = {
+      ...item('child-turn', 2, {
+        kind: 'turn',
+        turnId: 'turn-child',
+        state: 'completed',
+        startedAt: 2,
+        completedAt: 3
+      }),
+      agentId: 'task-1'
+    }
+    expect(activeStructuredAgentSessionTurnId([rootTurn, childTurn])).toBe('turn-root')
   })
 })

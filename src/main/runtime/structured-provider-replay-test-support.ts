@@ -15,6 +15,8 @@ import { structuredAgentSessionAgentStatus } from '../../shared/structured-agent
 import { hostTestMessage } from '../native-chat/agent-session-wire/structured-agent-session-host-test-data'
 import type { StructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-host'
 import { createScriptedClaudeRuntime } from './structured-claude-scripted-runtime-test-support'
+import { AgentHookServer } from '../agent-hooks/server'
+import type { StructuredAgentSessionStatusSink } from '../native-chat/agent-session-wire/structured-agent-session-status-feed'
 
 export type ReplayTranscriptEntry =
   | { type: 'transcript_start'; provider: string; protocol: string; version: string }
@@ -63,6 +65,8 @@ export type ProviderReplay = {
   sessionId: string
   /** Every summary the host published for the session, in order. */
   statuses: AgentSessionStatusSummary[]
+  /** The agent-status store the host writes its rows and child records into, as in production. */
+  statusStore: AgentHookServer
   /** Sends the recorded prompt, then plays every recorded inbound frame. */
   play: (options?: ReplayPlayOptions) => Promise<void>
   /** Sends the played prompt again under the same operation id: whether the host replayed it. */
@@ -164,6 +168,24 @@ export function resendPlayed(
   return resendPrompt(host, played)
 }
 
+/** The hook server's store wired as the host's status sink, the way the desktop wires it. */
+export function replayStatusStore(): {
+  store: AgentHookServer
+  statusSink: StructuredAgentSessionStatusSink
+} {
+  const store = new AgentHookServer()
+  return {
+    store,
+    statusSink: {
+      publish: (summary, subject) => store.ingestStructuredStatus(summary, subject),
+      forget: (subject) => store.dropStructuredStatus(subject),
+      publishChildWork: (subject, evidence, provider) =>
+        store.ingestStructuredChildWork(subject, evidence, provider),
+      readChildWork: (subject) => store.getStructuredChildWorkViews(subject)
+    }
+  }
+}
+
 export const nextTick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
 /** Rewrites the recorded provider session id to the one this run launched, so the adapter's
@@ -185,7 +207,8 @@ export async function openClaudeReplay(fixture: string): Promise<ProviderReplay>
   const sessionId = `replay-${fixture.replace(/\W+/g, '-')}`
   const providerSessionId = claudeSessionIdForOrcaSession(sessionId)
   const claude = createScriptedClaudeRuntime([sessionId])
-  const host = await claude.install()
+  const { store, statusSink } = replayStatusStore()
+  const host = await claude.install({ statusSink })
   const attached = await host.attach(CALLER, claude.attachParams(sessionId, null))
   if (!attached.ok) {
     throw new Error(`replay attach refused: ${JSON.stringify(attached.refusal)}`)
@@ -200,6 +223,7 @@ export async function openClaudeReplay(fixture: string): Promise<ProviderReplay>
     host,
     sessionId,
     statuses,
+    statusStore: store,
     play: async (options = {}) => {
       const child = claude.child(sessionId)
       const sent = Promise.withResolvers<Record<string, unknown>>()

@@ -43,7 +43,8 @@ export function activeStructuredAgentSessionTurnId(
       return null
     }
     const turn = readAgentJournalTurn(items[index]?.body)
-    if (turn) {
+    // Only the root run's turn answers: a child's turn ending must never end the session's.
+    if (turn && isRootAgentJournalItem(items[index])) {
       return turn.state === 'running' ? turn.turnId : null
     }
   }
