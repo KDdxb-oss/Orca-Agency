@@ -3,7 +3,8 @@
 // only after the snapshot exists; a steer or an approval opens no turn and keeps the baseline. The
 // end is captured on the turn's completion, in the same per-session lane, so the next turn's start
 // waits for it. A start this process never saw (a restart mid-turn), failed to capture, or an end
-// the next turn outwaited leaves the turn measured from HEAD and marked not rollbackable.
+// the next turn outwaited, or a start reused across sends leaves the turn measured from HEAD and
+// marked not rollbackable.
 
 import type { StructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-host'
 import type { StructuredAgentSessionLogger } from '../native-chat/agent-session-wire/structured-agent-session-logger'
@@ -33,6 +34,9 @@ export async function structuredAgentSessionDirectory(
 type SessionCheckpoints = {
   /** The start of the turn the latest turn-opening send began; consumed by that turn's end. */
   baseline?: Promise<string | null>
+  /** A later send reused `baseline`. A turn that ended without a completion looks the same as
+   *  queued work, so the user's edits between them may sit inside it: never rollbackable. */
+  reused?: boolean
   /** The latest turn this host saw complete, and when its checkpoint is written. `overlapped` is
    *  set when the next turn proceeded before that write, so it may hold the next turn's edits. */
   completed?: { turnId: string; saved: Promise<void>; overlapped: boolean }
@@ -80,6 +84,7 @@ export function installStructuredAgentTurnCheckpoints(
     // The feed holds a completion back while queued work remains, so that turn and this one end as
     // one completion: keep the earlier start and record them as one checkpoint.
     if (state.baseline) {
+      state.reused = true
       return
     }
     const baseline = inLane(sessionId, async () => {
@@ -117,7 +122,8 @@ export function installStructuredAgentTurnCheckpoints(
       const state = sessionState(sessionId)
       const baseline = state.baseline ?? Promise.resolve(null)
       state.baseline = undefined
-      const completed = { turnId, saved: Promise.resolve(), overlapped: false }
+      const completed = { turnId, saved: Promise.resolve(), overlapped: state.reused === true }
+      state.reused = undefined
       completed.saved = inLane(sessionId, async () => {
         const cwd = await structuredAgentSessionDirectory(host, sessionId)
         if (cwd) {

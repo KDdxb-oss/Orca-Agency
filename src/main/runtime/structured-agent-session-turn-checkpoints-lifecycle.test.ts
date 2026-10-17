@@ -216,21 +216,30 @@ describe('structured turn checkpoint lifecycle', () => {
     ).resolves.toMatchObject({ rollbackable: false })
   })
 
-  it('records turns the feed completes as one (queued sends) as one checkpoint from the first start', async () => {
+  it('records turns the feed completes as one as one checkpoint that is never rollbackable', async () => {
     const host = fakeHost()
     await host.startTurn()
     writeFileSync(join(workspace, 'one.txt'), '1\n')
-    // Turn 1 settles with a queued send, so the feed emits no completion for it.
+    // Turn 1 settles with a queued send (or ends with no verdict), so the feed emits no completion
+    // for it; the file could equally be the user's edit while idle, so rollback must not erase it.
     await host.startTurn()
     writeFileSync(join(workspace, 'two.txt'), '2\n')
     host.completeTurn('turn-2')
 
     await settledStructuredAgentTurnCheckpoint(host.host, SESSION)
     expect(git('for-each-ref', '--format=%(refname)', 'refs/orca').split('\n')).toHaveLength(1)
+    await host.startTurn()
+    writeFileSync(join(workspace, 'three.txt'), '3\n')
+    host.completeTurn('turn-3')
+    await settledStructuredAgentTurnCheckpoint(host.host, SESSION)
+    await expect(
+      readAgentTurnCheckpointDiff({ cwd: workspace, sessionId: SESSION, turnId: 'turn-3' })
+    ).resolves.toMatchObject({ rollbackable: true })
+    await expect(changedPaths('turn-3')).resolves.toEqual(['three.txt'])
     await expect(
       readAgentTurnCheckpointDiff({ cwd: workspace, sessionId: SESSION, turnId: 'turn-2' })
     ).resolves.toMatchObject({
-      rollbackable: true,
+      rollbackable: false,
       files: [
         expect.objectContaining({ path: 'one.txt' }),
         expect.objectContaining({ path: 'two.txt' })
