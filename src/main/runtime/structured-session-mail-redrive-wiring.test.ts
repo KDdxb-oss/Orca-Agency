@@ -15,7 +15,8 @@ vi.mock('./structured-agent-session-runtime', async (importOriginal) => ({
   ...(await importOriginal<typeof StructuredAgentSessionRuntime>()),
   ensureStructuredAgentSessionHost: vi.fn(async (deps: StructuredAgentSessionRuntimeDeps) => {
     installed.deps = deps
-    return {}
+    // The runtime installs its turn checkpoints on the host it gets back.
+    return { subscribeStatus: () => () => {}, subscribeTurnCompletions: () => () => {} }
   })
 }))
 

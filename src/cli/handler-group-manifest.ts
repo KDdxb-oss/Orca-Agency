@@ -201,6 +201,11 @@ export const HANDLER_GROUPS: readonly HandlerGroup[] = [
     load: async () => (await import('./handlers/diagnostics.js')).DIAGNOSTICS_HANDLERS
   },
   {
+    name: 'checkpoints',
+    keys: ['checkpoint list', 'checkpoint diff', 'checkpoint rollback'],
+    load: async () => (await import('./handlers/checkpoints.js')).CHECKPOINT_HANDLERS
+  },
+  {
     name: 'introspection',
     keys: ['agent-context'],
     load: async () => (await import('./handlers/introspection.js')).INTROSPECTION_HANDLERS

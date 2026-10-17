@@ -516,6 +516,11 @@ import {
   ThreadGoalParams,
   UnsubscribeParams
 } from './structured-agent-session-params'
+import {
+  TurnCheckpointDiffParams,
+  TurnCheckpointFileParams,
+  TurnCheckpointRollbackParams
+} from './structured-agent-session-turn-checkpoint-params'
 import { TerminalAdoptOrphans } from './terminal-orphan-params'
 import { TerminalQuickCommandsUpdate } from './terminal-quick-command-params'
 import {
@@ -635,12 +640,16 @@ export const RPC_PARAMS_BY_METHOD = {
   'agentSession.restartResume': RestartResumeParams,
   'agentSession.reveal': OptionsParams,
   'agentSession.rewind': RewindParams,
+  'agentSession.rollbackTurnCheckpoint': TurnCheckpointRollbackParams,
   'agentSession.send': SendParams,
   'agentSession.setOption': SetOptionParams,
   'agentSession.subscribe': SubscribeParams,
   'agentSession.subscribeStatus': null,
   'agentSession.subscribeTurnCompletions': SubscribeTurnCompletionsParams,
   'agentSession.threadGoal': ThreadGoalParams,
+  'agentSession.turnCheckpointDiff': TurnCheckpointDiffParams,
+  'agentSession.turnCheckpointFile': TurnCheckpointFileParams,
+  'agentSession.turnCheckpoints': OptionsParams,
   'agentSession.unsubscribe': UnsubscribeParams,
   'agentSessionAttachment.read': AttachmentReadParams,
   'agentSessionAttachment.uploadAbort': AttachmentUploadIdParams,

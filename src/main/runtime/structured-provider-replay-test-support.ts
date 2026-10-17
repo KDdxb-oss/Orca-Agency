@@ -78,7 +78,7 @@ export type ProviderReplay = {
 
 export type ReplayPlayOptions = {
   /** Runs once the frame at `index` (0-based, of `total` inbound frames) has been handed over. */
-  afterFrame?: (index: number, total: number) => void
+  afterFrame?: (index: number, total: number) => void | Promise<void>
 }
 
 export type ReplaySend = Parameters<StructuredAgentSessionHost['send']>[1]
@@ -255,7 +255,7 @@ export async function openClaudeReplay(fixture: string): Promise<ProviderReplay>
         }
         child.handlers.onMessage?.(replayed as Record<string, unknown>)
         await nextTick()
-        options.afterFrame?.(index, frames.length + 1)
+        await options.afterFrame?.(index, frames.length + 1)
       }
     },
     resend: () => resendPlayed(host, played),

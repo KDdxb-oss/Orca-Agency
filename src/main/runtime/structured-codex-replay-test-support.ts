@@ -15,6 +15,7 @@ import {
   ensureStructuredAgentSessionHost,
   stopStructuredAgentSessionRuntime
 } from './structured-agent-session-runtime'
+import { installStructuredAgentTurnCheckpoints } from './structured-agent-session-turn-checkpoints'
 import {
   CALLER,
   nextTick,
@@ -39,7 +40,16 @@ function withSendEcho(params: unknown, clientId: unknown): unknown {
     : params
 }
 
-export async function openCodexReplay(fixture: string): Promise<ProviderReplay> {
+export type CodexReplayOptions = {
+  /** The folder the session's agent works in; the replay's own scratch folder by default. */
+  workspace?: string
+  turnCheckpoints?: true
+}
+
+export async function openCodexReplay(
+  fixture: string,
+  options: CodexReplayOptions = {}
+): Promise<ProviderReplay> {
   const transcript = readReplayTranscript(fixture)
   const root = await mkdtemp(join(tmpdir(), 'orca-codex-replay-'))
   // Each recorded request's result, keyed by method, and the notifications that followed it.
@@ -87,7 +97,7 @@ export async function openCodexReplay(fixture: string): Promise<ProviderReplay> 
           String(notification.method),
           withSendEcho(notification.params, clientUserMessageId)
         )
-        playOptions.afterFrame?.(delivered++, total)
+        await playOptions.afterFrame?.(delivered++, total)
       }
     })
   }
@@ -126,7 +136,7 @@ export async function openCodexReplay(fixture: string): Promise<ProviderReplay> 
     stateDirectory: root,
     hostId: 'local',
     claimKeyId: 'key-1',
-    resolveWorkspacePath: async () => root,
+    resolveWorkspacePath: async () => options.workspace ?? root,
     resolveLaunchArgs: () => [],
     resolveClaudeAuthPolicy: () => ({ stripAuthEnv: true }),
     resolveCodexCommand: () => 'codex',
@@ -134,6 +144,9 @@ export async function openCodexReplay(fixture: string): Promise<ProviderReplay> 
     openCodexConnection: openConnection,
     readProcessStartTime: async () => 1_700_000_000_000
   })
+  if (options.turnCheckpoints) {
+    installStructuredAgentTurnCheckpoints(host, createStructuredAgentSessionLogger())
+  }
   const attachParams = hostTestAttachParams(null, { providerHandle: undefined })
   attachParams.envelope.clientOperationId = operationId()
   const attached = await host.attach(CALLER, attachParams)
