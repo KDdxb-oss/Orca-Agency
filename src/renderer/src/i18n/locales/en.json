@@ -19040,6 +19040,26 @@
       "important": "Important",
       "warning": "Warning",
       "caution": "Caution"
+    },
+    "sidebar": {
+      "agentResult": {
+        "diffSubject": "Agent turn",
+        "diffFailed": "Could not open the diff",
+        "noChanges": "No files changed in this turn.",
+        "oneFile": "1 changed file",
+        "manyFiles": "{{count}} changed files",
+        "openFullDiff": "Open full diff",
+        "openDiff": "Open diff",
+        "truncated": "Large turn: showing the first {{shown}} of {{count}} files.",
+        "filesLabel": "Changed files",
+        "answer": "Final answer",
+        "noAnswer": "The agent left no final message.",
+        "changes": "Changes",
+        "loading": "Loading changes…",
+        "loadFailed": "Couldn't load this turn's changes.",
+        "trigger": "Show this agent's result",
+        "triggerShort": "Result"
+      }
     }
   },
   "dashboardPopout": {

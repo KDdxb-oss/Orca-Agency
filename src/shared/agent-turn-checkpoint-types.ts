@@ -16,6 +16,8 @@ export type AgentTurnCheckpointDiff = {
   sessionId: string
   turnId: string
   ref: string
+  /** The checkpoint commit; its first parent is the turn's start, so it opens as a commit diff. */
+  commit: string
   /** The first 500 changed files. */
   files: AgentTurnCheckpointFile[]
   fileCount: number

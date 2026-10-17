@@ -1,3 +1,4 @@
+import { AgentRowResult } from './AgentRowResult'
 import React, { useCallback, useEffect, useRef } from 'react'
 import { DashboardAgentChildDisclosure } from '@/components/dashboard/DashboardAgentChildDisclosure'
 import { AgentStateDot, agentStateLabel } from '@/components/AgentStateDot'
@@ -259,6 +260,7 @@ export const CompactAgentRow = React.memo(function CompactAgentRow({
           +{childAgentCount}
         </span>
       )}
+      <AgentRowResult agent={agent} />
       {cacheTimer && <CacheTimer startedAt={cacheTimer.startedAt} ttlMs={cacheTimer.ttlMs} />}
       {hasChildDisclosure ? (
         <DashboardAgentChildDisclosure

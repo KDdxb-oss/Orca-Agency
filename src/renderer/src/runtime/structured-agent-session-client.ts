@@ -7,6 +7,7 @@ import type {
 } from '../../../shared/agent-session-wire'
 import { getRuntimeEnvironmentRevision } from './runtime-environment-revision'
 import type { AgentSessionConversationOutline } from '../../../shared/agent-session-conversation-outline'
+import type { AgentTurnCheckpointDiff } from '../../../shared/agent-turn-checkpoint-types'
 import { AGENT_SESSION_CONVERSATION_COMMAND_TIMEOUT_MS } from '../../../shared/agent-session-conversation-command'
 import {
   AGENT_SESSION_ATTENTION_ACK_RUNTIME_CAPABILITY,
@@ -15,6 +16,7 @@ import {
   AGENT_SESSION_QUESTION_ANSWERS_RUNTIME_CAPABILITY,
   AGENT_SESSION_REWIND_RUNTIME_CAPABILITY,
   AGENT_SESSION_REPEATED_STOP_RUNTIME_CAPABILITY,
+  AGENT_SESSION_TURN_CHECKPOINTS_RUNTIME_CAPABILITY,
   type RuntimeCapability
 } from '../../../shared/protocol-version'
 import {
@@ -87,6 +89,28 @@ export async function readStructuredAgentSessionConversationOutline(
     'agentSession.conversationOutline',
     { sessionId }
   )
+}
+
+/** The session's latest turn checkpoint; null when the host predates checkpoints or saved none
+ *  (a folder outside git). A failed read rejects. */
+export async function readStructuredAgentSessionTurnCheckpointDiff(
+  target: RuntimeClientTarget,
+  sessionId: string
+): Promise<AgentTurnCheckpointDiff | null> {
+  if (
+    !(await structuredAgentSessionHostSupports(
+      target,
+      AGENT_SESSION_TURN_CHECKPOINTS_RUNTIME_CAPABILITY
+    ))
+  ) {
+    return null
+  }
+  const { diff } = await callRuntimeRpc<{ diff: AgentTurnCheckpointDiff | null }>(
+    target,
+    'agentSession.turnCheckpointDiff',
+    { sessionId }
+  )
+  return diff
 }
 
 const STRUCTURED_AGENT_SESSION_METHOD_TIMEOUT_MS: ReadonlyMap<string, number> = new Map([

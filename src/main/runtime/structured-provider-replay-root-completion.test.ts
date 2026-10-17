@@ -11,6 +11,8 @@ import {
   readReplayTranscript,
   replayedAgentState,
   replayedStateSequence,
+  replayRecord,
+  replayString,
   type ProviderReplay
 } from './structured-provider-replay-test-support'
 import { openCodexReplay } from './structured-codex-replay-test-support'
@@ -33,11 +35,9 @@ function lastChildCompletion(
   const frames = readReplayTranscript(fixture).flatMap((entry) =>
     entry.type === 'emit_inbound' && handedOver(entry.frame) ? [entry.frame] : []
   )
-  const rootThreadId = (
-    frames.find((frame) => frame.method === 'turn/started')?.params as
-      | { threadId?: string }
-      | undefined
-  )?.threadId
+  const rootThreadId = replayString(
+    replayRecord(frames.find((frame) => frame.method === 'turn/started')?.params)?.threadId
+  )
   return frames.findLastIndex((frame) => isChildCompletion(frame, rootThreadId))
 }
 
@@ -54,8 +54,7 @@ describe.each([
     'codex-subagent.ndjson',
     openCodexReplay,
     (frame: Inbound, root: string | undefined) =>
-      frame.method === 'turn/completed' &&
-      (frame.params as { threadId?: string }).threadId !== root,
+      frame.method === 'turn/completed' && replayRecord(frame.params)?.threadId !== root,
     (frame: Inbound) => typeof frame.method === 'string',
     0
   ]

@@ -22,6 +22,7 @@ import {
   operationId,
   readReplayTranscript,
   recordedPrompt,
+  replayRecord,
   replayStatusStore,
   resendPlayed,
   sendPrompt,
@@ -34,9 +35,10 @@ import {
 /** Codex echoes the `clientUserMessageId` a turn/start carried as its user item's `clientId`; a
  *  recorder that sent none left it null. */
 function withSendEcho(params: unknown, clientId: unknown): unknown {
-  const item = (params as { item?: Record<string, unknown> } | null)?.item
+  const record = replayRecord(params)
+  const item = replayRecord(record?.item)
   return item?.type === 'userMessage' && item.clientId == null && typeof clientId === 'string'
-    ? { ...(params as Record<string, unknown>), item: { ...item, clientId } }
+    ? { ...record, item: { ...item, clientId } }
     : params
 }
 
@@ -112,7 +114,7 @@ export async function openCodexReplay(
       request: async (method, params) => {
         if (method === 'turn/start') {
           turnStarts += 1
-          clientUserMessageId = (params as { clientUserMessageId?: unknown }).clientUserMessageId
+          clientUserMessageId = replayRecord(params)?.clientUserMessageId
         }
         const recorded = results.get(method)?.shift()
         if (method !== 'turn/start' && method !== 'thread/start') {

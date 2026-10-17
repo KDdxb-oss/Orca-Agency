@@ -27,11 +27,44 @@ export type ReplayTranscriptEntry =
 const FIXTURE_DIRECTORY = join(__dirname, '__fixtures__', 'provider-replay')
 export const CALLER = { callerKey: 'provider-replay' }
 
+/** The value as a plain record, or undefined: frames are untyped JSON. */
+export function replayRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value))
+    : undefined
+}
+
+export function replayString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
+function parseReplayEntry(line: string): ReplayTranscriptEntry {
+  const raw = replayRecord(JSON.parse(line))
+  const type = raw?.type
+  const frame = replayRecord(raw?.frame)
+  const label = replayString(raw?.label) ?? ''
+  if ((type === 'expect_outbound' || type === 'emit_inbound') && frame) {
+    return { type, label, frame }
+  }
+  if (type === 'transcript_start') {
+    return {
+      type,
+      provider: replayString(raw?.provider) ?? '',
+      protocol: replayString(raw?.protocol) ?? '',
+      version: replayString(raw?.version) ?? ''
+    }
+  }
+  if (type === 'runtime_exit') {
+    return { type }
+  }
+  throw new Error(`unreadable transcript line: ${line.slice(0, 120)}`)
+}
+
 export function readReplayTranscript(name: string): ReplayTranscriptEntry[] {
   return readFileSync(join(FIXTURE_DIRECTORY, name), 'utf8')
     .split('\n')
     .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as ReplayTranscriptEntry)
+    .map(parseReplayEntry)
 }
 
 /** The row state the sidebar shows for one published summary, child work folded in. */
@@ -144,15 +177,18 @@ export function recordedPrompt(transcript: readonly ReplayTranscriptEntry[]): st
     if (entry.type !== 'expect_outbound') {
       continue
     }
-    const message = (entry.frame.message as { message?: { content?: unknown } } | undefined)
-      ?.message
-    if (typeof message?.content === 'string') {
-      return message.content
+    const claudeText = replayString(
+      replayRecord(replayRecord(entry.frame.message)?.message)?.content
+    )
+    if (claudeText !== undefined) {
+      return claudeText
     }
-    const input = (entry.frame.params as { input?: { text?: unknown }[] } | undefined)?.input
-    const text = input?.find((part) => typeof part.text === 'string')?.text
-    if (typeof text === 'string') {
-      return text
+    const input = replayRecord(entry.frame.params)?.input
+    for (const part of Array.isArray(input) ? input : []) {
+      const codexText = replayString(replayRecord(part)?.text)
+      if (codexText !== undefined) {
+        return codexText
+      }
     }
   }
   throw new Error('the transcript records no prompt')
@@ -215,8 +251,9 @@ export async function openClaudeReplay(fixture: string): Promise<ProviderReplay>
   }
   const statuses = subscribeStatuses(host, sessionId)
   const frames = transcript.flatMap((entry) => (entry.type === 'emit_inbound' ? [entry.frame] : []))
-  const recordedSessionId = frames.find((frame) => typeof frame.session_id === 'string')
-    ?.session_id as string | undefined
+  const recordedSessionId = frames
+    .map((frame) => replayString(frame.session_id))
+    .find((id) => id !== undefined)
   let played: ReplaySend | null = null
   let dispatches = 0
   return {
@@ -237,8 +274,9 @@ export async function openClaudeReplay(fixture: string): Promise<ProviderReplay>
       const sentUuid = String((await sent.promise).uuid)
       // The CLI replays Orca's own send back (--replay-user-messages); a recorder that sent
       // without it left no echo, and its command uuid was its own.
-      const recordedCommand = frames.find((frame) => typeof frame.command_uuid === 'string')
-        ?.command_uuid as string | undefined
+      const recordedCommand = frames
+        .map((frame) => replayString(frame.command_uuid))
+        .find((id) => id !== undefined)
       const echo = {
         type: 'user',
         parent_tool_use_id: null,
@@ -247,13 +285,13 @@ export async function openClaudeReplay(fixture: string): Promise<ProviderReplay>
         message: { role: 'user', content: [{ type: 'text', text: prompt }] }
       }
       for (const [index, frame] of [echo, ...frames].entries()) {
-        let replayed = recordedSessionId
+        let replayed: unknown = recordedSessionId
           ? withSessionId(frame, recordedSessionId, providerSessionId)
           : frame
         if (recordedCommand) {
           replayed = withSessionId(replayed, recordedCommand, sentUuid)
         }
-        child.handlers.onMessage?.(replayed as Record<string, unknown>)
+        child.handlers.onMessage?.(replayRecord(replayed) ?? {})
         await nextTick()
         await options.afterFrame?.(index, frames.length + 1)
       }

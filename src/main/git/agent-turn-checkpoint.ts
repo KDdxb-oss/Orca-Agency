@@ -237,6 +237,7 @@ export async function readAgentTurnCheckpointDiff(input: {
     sessionId: input.sessionId,
     turnId: target.turnId,
     ref: target.ref,
+    commit: (await git(root, ['rev-parse', target.ref])).trim(),
     files: all.slice(0, AGENT_TURN_CHECKPOINT_MAX_FILES),
     fileCount: all.length,
     added: all.reduce((sum, file) => sum + (file.added ?? 0), 0),

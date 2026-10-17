@@ -264,6 +264,10 @@ export const CLAUDE_STRUCTURED_AGENT_SESSION_RUNTIME_CAPABILITY =
 // older host leaves the message rail on loaded messages instead of answering method_not_found.
 export const AGENT_SESSION_CONVERSATION_OUTLINE_RUNTIME_CAPABILITY =
   'agent-session.conversation-outline.v1' as const
+// Why: agentSession.turnCheckpoint* are additive; a client probes this so an older host's finished
+// agent shows its answer alone instead of answering method_not_found.
+export const AGENT_SESSION_TURN_CHECKPOINTS_RUNTIME_CAPABILITY =
+  'agent-session.turn-checkpoints.v1' as const
 // The RPC is registered unconditionally; per-session rewind support is a separate check.
 export const AGENT_SESSION_REWIND_RUNTIME_CAPABILITY = 'agent-session.rewind.v1' as const
 // Why: the rewind UI relies on the next send settling an in-doubt rewind, even with the agent up.
@@ -400,6 +404,7 @@ export const RUNTIME_CAPABILITIES = [
   AGENT_SESSION_REWIND_RUNTIME_CAPABILITY,
   AGENT_SESSION_REWIND_RECOVERY_CAPABILITY,
   AGENT_SESSION_CONVERSATION_OUTLINE_RUNTIME_CAPABILITY,
+  AGENT_SESSION_TURN_CHECKPOINTS_RUNTIME_CAPABILITY,
   AGENT_SESSION_BACKGROUND_TASK_STOP_CAPABILITY,
   AGENT_SESSION_QUESTION_ANSWERS_RUNTIME_CAPABILITY,
   AGENT_SESSION_ATTACHMENTS_RUNTIME_CAPABILITY,
