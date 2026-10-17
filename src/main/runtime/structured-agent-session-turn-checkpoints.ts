@@ -2,8 +2,8 @@
 // turn's start is captured by the host's turn-dispatch barrier, so the provider gets the message
 // only after the snapshot exists; a steer or an approval opens no turn and keeps the baseline. The
 // end is captured on the turn's completion, in the same per-session lane, so the next turn's start
-// always waits for it. A start this process never saw (a restart mid-turn) or failed to capture
-// leaves the turn measured from HEAD and marked not rollbackable.
+// waits for it. A start this process never saw (a restart mid-turn), failed to capture, or an end
+// the next turn outwaited leaves the turn measured from HEAD and marked not rollbackable.
 
 import type { StructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-host'
 import type { StructuredAgentSessionLogger } from '../native-chat/agent-session-wire/structured-agent-session-logger'
@@ -33,8 +33,9 @@ export async function structuredAgentSessionDirectory(
 type SessionCheckpoints = {
   /** The start of the turn the latest turn-opening send began; consumed by that turn's end. */
   baseline?: Promise<string | null>
-  /** The latest turn this host saw complete, and when its checkpoint is written. */
-  completed?: { turnId: string; saved: Promise<void> }
+  /** The latest turn this host saw complete, and when its checkpoint is written. `overlapped` is
+   *  set when the next turn proceeded before that write, so it may hold the next turn's edits. */
+  completed?: { turnId: string; saved: Promise<void>; overlapped: boolean }
 }
 
 const installed = new WeakMap<StructuredAgentSessionHost, Map<string, SessionCheckpoints>>()
@@ -76,6 +77,11 @@ export function installStructuredAgentTurnCheckpoints(
 
   host.turnDispatchBarrier = async (sessionId) => {
     const state = sessionState(sessionId)
+    // The feed holds a completion back while queued work remains, so that turn and this one end as
+    // one completion: keep the earlier start and record them as one checkpoint.
+    if (state.baseline) {
+      return
+    }
     const baseline = inLane(sessionId, async () => {
       const cwd = await structuredAgentSessionDirectory(host, sessionId)
       return cwd ? captureAgentTurnBaseline(cwd) : null
@@ -89,9 +95,15 @@ export function installStructuredAgentTurnCheckpoints(
       })
     ])
     clearTimeout(timer)
-    // A start captured after the provider began may hold the agent's first edits.
-    if (late && state.baseline === baseline) {
-      state.baseline = Promise.resolve(null)
+    // A start captured after the provider began may hold the agent's first edits, and a previous
+    // end still being captured may hold them too.
+    if (late) {
+      if (state.completed) {
+        state.completed.overlapped = true
+      }
+      if (state.baseline === baseline) {
+        state.baseline = Promise.resolve(null)
+      }
       failed(sessionId, new Error('turn start snapshot timed out'))
     }
   }
@@ -105,15 +117,22 @@ export function installStructuredAgentTurnCheckpoints(
       const state = sessionState(sessionId)
       const baseline = state.baseline ?? Promise.resolve(null)
       state.baseline = undefined
-      const saved = inLane(sessionId, async () => {
+      const completed = { turnId, saved: Promise.resolve(), overlapped: false }
+      completed.saved = inLane(sessionId, async () => {
         const cwd = await structuredAgentSessionDirectory(host, sessionId)
         if (cwd) {
-          await captureAgentTurnCheckpoint({ cwd, sessionId, turnId, baseline: await baseline })
+          await captureAgentTurnCheckpoint({
+            cwd,
+            sessionId,
+            turnId,
+            baseline: await baseline,
+            overlapped: () => completed.overlapped
+          })
         }
       }).catch((error: unknown) => {
         failed(sessionId, error)
       })
-      state.completed = { turnId, saved }
+      state.completed = completed
     }
   })
 }

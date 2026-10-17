@@ -185,24 +185,29 @@ export async function captureAgentTurnCheckpoint(input: {
   sessionId: string
   turnId: string
   baseline: string | null
+  /** True once a later turn may have started editing; read after the snapshot, so a capture that
+   *  overlapped it is measured from HEAD and refused for rollback like an unseen start. */
+  overlapped?: () => boolean
 }): Promise<string | null> {
   const root = await agentTurnCheckpointRoot(input.cwd)
   if (!root) {
     return null
   }
   const head = await agentTurnCheckpointHead(root)
-  const parent = input.baseline ?? head
+  const tree = await snapshotAgentTurnWorktree(root)
+  const index = await agentTurnCheckpointIndexTree(root)
+  const baseline = input.overlapped?.() ? null : input.baseline
+  const parent = baseline ?? head
   // An unborn branch and no baseline leave nothing to measure the turn against.
   if (!parent) {
     return null
   }
-  const tree = await snapshotAgentTurnWorktree(root)
   const message = [
     `orca turn ${input.turnId}`,
     '',
     `${HEAD_TRAILER} ${head ?? 'none'}`,
-    `${BASELINE_TRAILER} ${input.baseline ?? 'none'}`,
-    `${INDEX_TRAILER} ${(await agentTurnCheckpointIndexTree(root)) ?? 'none'}`,
+    `${BASELINE_TRAILER} ${baseline ?? 'none'}`,
+    `${INDEX_TRAILER} ${index ?? 'none'}`,
     `${ORDER_TRAILER} ${nextOrder()}`
   ].join('\n')
   const commit = await commitTree(root, tree, parent, message)

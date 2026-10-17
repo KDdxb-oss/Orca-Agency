@@ -11,14 +11,16 @@ function count(value: number | null): string {
   return value === null ? 'bin' : String(value)
 }
 
-function formatDiff({ diff }: { diff: AgentTurnCheckpointDiff | null }): string {
+export function formatDiff({ diff }: { diff: AgentTurnCheckpointDiff | null }): string {
   if (!diff) {
     return 'No checkpoint for that turn.'
   }
   return [
     `turn: ${diff.turnId}`,
     `files: ${diff.fileCount} (+${diff.added} -${diff.removed})${diff.truncated ? ' (truncated)' : ''}`,
-    ...(diff.rollbackable ? [] : ['start not saved: measured from HEAD, rollback unavailable']),
+    ...(diff.rollbackable !== false
+      ? []
+      : ['start not saved: measured from HEAD, rollback unavailable']),
     ...diff.files.map(
       (file) =>
         `+${count(file.added)} -${count(file.removed)}\t${file.oldPath ? `${file.oldPath} -> ` : ''}${file.path}`

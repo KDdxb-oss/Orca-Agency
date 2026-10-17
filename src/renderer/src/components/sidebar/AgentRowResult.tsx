@@ -224,7 +224,7 @@ export function AgentRowResultPanel({
             </p>
           ) : (
             <>
-              {load.diff.rollbackable ? null : (
+              {load.diff.rollbackable !== false ? null : (
                 <p className="text-xs text-muted-foreground">
                   {translate(
                     'components.sidebar.agentResult.unverifiedStart',

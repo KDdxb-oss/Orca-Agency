@@ -26,8 +26,8 @@ export type AgentTurnCheckpointDiff = {
   /** More files than listed, or a patch larger than 1 MB. */
   truncated: boolean
   /** False when the turn's start went unseen: it is measured from HEAD, so it may include the
-   *  user's earlier uncommitted work, and rollback refuses it. */
-  rollbackable: boolean
+   *  user's earlier uncommitted work, and rollback refuses it. Absent from older hosts: unknown. */
+  rollbackable?: boolean
 }
 
 export type AgentTurnCheckpointRollback =

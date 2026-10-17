@@ -184,6 +184,60 @@ describe('structured turn checkpoint lifecycle', () => {
     ).resolves.toMatchObject({ rollbackable: false })
   })
 
+  it('marks the previous turn not rollbackable when the next one outwaits its end capture', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let releaseFolder: () => void = () => {}
+    const slowFolder = new Promise<void>((resolve) => {
+      releaseFolder = resolve
+    })
+    let calls = 0
+    const host = fakeHost(async () => {
+      calls += 1
+      // Call 2 is turn-1's end capture.
+      if (calls === 2) {
+        await slowFolder
+      }
+      return workspace
+    })
+    await host.startTurn()
+    writeFileSync(join(workspace, 'one.txt'), '1\n')
+    host.completeTurn('turn-1')
+    const started = host.startTurn()
+    await vi.advanceTimersByTimeAsync(STRUCTURED_TURN_BASELINE_WAIT_MS)
+    await started
+    // Turn 2 edits while turn-1's end is still unwritten, so that end holds this edit too.
+    writeFileSync(join(workspace, 'two.txt'), '2\n')
+    releaseFolder()
+    vi.useRealTimers()
+
+    await settledStructuredAgentTurnCheckpoint(host.host, SESSION)
+    await expect(
+      readAgentTurnCheckpointDiff({ cwd: workspace, sessionId: SESSION, turnId: 'turn-1' })
+    ).resolves.toMatchObject({ rollbackable: false })
+  })
+
+  it('records turns the feed completes as one (queued sends) as one checkpoint from the first start', async () => {
+    const host = fakeHost()
+    await host.startTurn()
+    writeFileSync(join(workspace, 'one.txt'), '1\n')
+    // Turn 1 settles with a queued send, so the feed emits no completion for it.
+    await host.startTurn()
+    writeFileSync(join(workspace, 'two.txt'), '2\n')
+    host.completeTurn('turn-2')
+
+    await settledStructuredAgentTurnCheckpoint(host.host, SESSION)
+    expect(git('for-each-ref', '--format=%(refname)', 'refs/orca').split('\n')).toHaveLength(1)
+    await expect(
+      readAgentTurnCheckpointDiff({ cwd: workspace, sessionId: SESSION, turnId: 'turn-2' })
+    ).resolves.toMatchObject({
+      rollbackable: true,
+      files: [
+        expect.objectContaining({ path: 'one.txt' }),
+        expect.objectContaining({ path: 'two.txt' })
+      ]
+    })
+  })
+
   it('saves nothing for a session whose agent runs inside WSL', async () => {
     const host = fakeHost(async () => workspace, { wslDistro: 'Ubuntu' })
     await host.startTurn()

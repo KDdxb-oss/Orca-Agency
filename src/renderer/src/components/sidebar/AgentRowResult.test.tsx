@@ -136,6 +136,26 @@ describe('AgentRowResult', () => {
     ])
   })
 
+  it('adds no starting-point note for an older host that does not say', async () => {
+    store.state.unifiedTabsByWorktree = {
+      'wt-1': [{ id: 'tab-1', contentType: 'structured', entityId: 'session-1' }]
+    }
+    readDiff.mockResolvedValue({
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      ref: 'refs/orca/checkpoints/session-1/turn-1',
+      commit: 'abc123',
+      fileCount: 1,
+      added: 1,
+      removed: 0,
+      truncated: false,
+      files: [{ path: 'a.ts', added: 1, removed: 0 }]
+    })
+    const panel = await render(<AgentRowResultPanel agent={makeAgent()} />)
+    expect(panel.textContent).toContain('1 changed file')
+    expect(panel.textContent).not.toContain('starting point')
+  })
+
   it('waits for a capture still being written, then flags a turn measured from HEAD', async () => {
     store.state.unifiedTabsByWorktree = {
       'wt-1': [{ id: 'tab-1', contentType: 'structured', entityId: 'session-1' }]
