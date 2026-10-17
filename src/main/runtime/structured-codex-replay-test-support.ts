@@ -21,9 +21,12 @@ import {
   operationId,
   readReplayTranscript,
   recordedPrompt,
+  resendPlayed,
   sendPrompt,
   subscribeStatuses,
-  type ProviderReplay
+  type ProviderReplay,
+  type ReplayPlayOptions,
+  type ReplaySend
 } from './structured-provider-replay-test-support'
 
 /** Codex echoes the `clientUserMessageId` a turn/start carried as its user item's `clientId`; a
@@ -66,6 +69,10 @@ export async function openCodexReplay(fixture: string): Promise<ProviderReplay> 
   let clientUserMessageId: unknown = null
   const emitted = new Set<string>()
   let playing: Promise<void> = Promise.resolve()
+  let playOptions: ReplayPlayOptions = {}
+  let turnStarts = 0
+  const total = [...notificationsAfter.values()].reduce((sum, list) => sum + list.length, 0)
+  let delivered = 0
   const emitAfter = (method: string): void => {
     if (emitted.has(method)) {
       return
@@ -79,6 +86,7 @@ export async function openCodexReplay(fixture: string): Promise<ProviderReplay> 
           String(notification.method),
           withSendEcho(notification.params, clientUserMessageId)
         )
+        playOptions.afterFrame?.(delivered++, total)
       }
     })
   }
@@ -92,6 +100,7 @@ export async function openCodexReplay(fixture: string): Promise<ProviderReplay> 
       closed: false,
       request: async (method, params) => {
         if (method === 'turn/start') {
+          turnStarts += 1
           clientUserMessageId = (params as { clientUserMessageId?: unknown }).clientUserMessageId
         }
         const recorded = results.get(method)?.shift()
@@ -130,17 +139,21 @@ export async function openCodexReplay(fixture: string): Promise<ProviderReplay> 
   }
   const sessionId = attachParams.envelope.sessionId
   const statuses = subscribeStatuses(host, sessionId)
+  let played: ReplaySend | null = null
   return {
     host,
     sessionId,
     statuses,
-    play: async () => {
-      await sendPrompt(host, sessionId, recordedPrompt(transcript))
+    play: async (options = {}) => {
+      playOptions = options
+      played = await sendPrompt(host, sessionId, recordedPrompt(transcript))
       while (!emitted.has('turn/start')) {
         await nextTick()
       }
       await playing
     },
+    resend: () => resendPlayed(host, played),
+    dispatches: () => turnStarts,
     dispose: async () => {
       await stopStructuredAgentSessionRuntime()
       await rm(root, { recursive: true, force: true })

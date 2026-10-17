@@ -1,4 +1,5 @@
 import type { AgentSessionHandleProvider } from '../../../shared/agent-session-provider-handle'
+import type { AgentSessionStatusEvent } from '../../../shared/agent-session-wire'
 import type { AgentChildWorkView } from '../../../shared/agent-status-child-work-view'
 import type { AgentSessionJournal } from '../agent-session-journal/journal-store'
 import type { StructuredAgentSessionProviderChildIdentity } from './structured-agent-session-host-types'
@@ -39,4 +40,13 @@ export function statusFeedChildView(over: Partial<AgentChildWorkView> = {}): Age
     invocation: { invocationId: 'toolu_1', generation: 1 },
     ...over
   }
+}
+
+/** The event without its feed position, for assertions about what a frame says. */
+export function withoutFeedPosition(event: AgentSessionStatusEvent): AgentSessionStatusEvent {
+  if (event.type === 'end') {
+    return event
+  }
+  const { epoch: _epoch, sequence: _sequence, ...rest } = event
+  return rest
 }

@@ -16,7 +16,8 @@ import { createDeferredStructuredAgentSessionEventSink } from './structured-agen
 import { createTrackedJournalOpener } from '../agent-session-journal/journal-host-database-test-support'
 import {
   indexedStatusFeedSession as indexed,
-  statusFeedChildView
+  statusFeedChildView,
+  withoutFeedPosition
 } from './structured-agent-session-status-feed-test-session'
 import {
   StructuredAgentSessionStatusFeed,
@@ -101,7 +102,10 @@ function feedFor(
     now: () => (now += 1)
   })
   const events: AgentSessionStatusEvent[] = []
-  const dispose = feed.subscribe({ id: 'list-1', emit: (event) => events.push(event) })
+  const dispose = feed.subscribe({
+    id: 'list-1',
+    emit: (event) => events.push(withoutFeedPosition(event))
+  })
   return { feed, events, dispose }
 }
 
@@ -141,6 +145,37 @@ describe('StructuredAgentSessionStatusFeed', () => {
       expect(secondStatus.session).not.toHaveProperty('hostExecutionOwned')
     }
     dispose()
+  })
+
+  it('numbers every frame in one epoch, and a snapshot restates the position it covers', async () => {
+    const journal = await openJournal()
+    const sessions = new Map<string, Indexed>([
+      [SESSION, { journal, child: { phase: 'ready', generation: 'child-1', fence: 1 } }]
+    ])
+    const { feed } = feedFor(sessions)
+    const raw: AgentSessionStatusEvent[] = []
+    feed.subscribe({ id: 'positions', emit: (event) => raw.push(event) })
+    await journal.appendItem(
+      USER_IDENTITY,
+      { kind: 'message', role: 'user', blocks: [{ type: 'text', text: 'hello' }] },
+      { fence: 1, turnScope: AGENT_JOURNAL_THREAD_SCOPE }
+    )
+    feed.publish(SESSION, journal)
+    sessions.get(SESSION)!.child = null
+    feed.publish(SESSION, journal)
+    const late: AgentSessionStatusEvent[] = []
+    feed.subscribe({ id: 'late', emit: (event) => late.push(event) })
+
+    const [opening, ...statuses] = raw
+    expect(opening).toMatchObject({ type: 'snapshot', epoch: expect.any(String) })
+    expect(statuses.map((event) => event.type)).toEqual(['status', 'status'])
+    const sequences = statuses.map((event) => (event.type === 'end' ? -1 : event.sequence))
+    const first = opening?.type === 'snapshot' ? (opening.sequence ?? 0) : 0
+    expect(sequences).toEqual([first + 1, first + 2])
+    for (const event of [...statuses, ...late]) {
+      expect(event).toMatchObject({ epoch: opening?.type === 'end' ? '' : opening?.epoch })
+    }
+    expect(late[0]).toMatchObject({ type: 'snapshot', sequence: first + 2 })
   })
 
   it('opens with every readable session and reports no status before a persisted turn', async () => {
@@ -442,7 +477,7 @@ describe('StructuredAgentSessionStatusFeed', () => {
     sessions.delete(SESSION)
     feed.publish(SESSION)
     const late: AgentSessionStatusEvent[] = []
-    feed.subscribe({ id: 'list-late', emit: (event) => late.push(event) })
+    feed.subscribe({ id: 'list-late', emit: (event) => late.push(withoutFeedPosition(event)) })
 
     expect(events).toHaveLength(2)
     expect(late).toEqual([
@@ -465,7 +500,7 @@ describe('StructuredAgentSessionStatusFeed', () => {
     )
 
     const late: AgentSessionStatusEvent[] = []
-    feed.subscribe({ id: 'list-late', emit: (event) => late.push(event) })
+    feed.subscribe({ id: 'list-late', emit: (event) => late.push(withoutFeedPosition(event)) })
 
     expect(events.at(-1)).toEqual({
       type: 'status',
@@ -487,7 +522,7 @@ describe('StructuredAgentSessionStatusFeed', () => {
     const journal = await openJournal()
     const { feed, events, dispose } = feedFor(new Map([[SESSION, { journal }]]))
     const others: AgentSessionStatusEvent[] = []
-    feed.subscribe({ id: 'list-2', emit: (event) => others.push(event) })
+    feed.subscribe({ id: 'list-2', emit: (event) => others.push(withoutFeedPosition(event)) })
 
     dispose()
     await journal.appendItem(
@@ -749,7 +784,7 @@ describe('the status sink sees the roster the broadcast cache deliberately lacks
       }
     ])
     const late: AgentSessionStatusEvent[] = []
-    feed.subscribe({ id: 'list-2', emit: (event) => late.push(event) })
+    feed.subscribe({ id: 'list-2', emit: (event) => late.push(withoutFeedPosition(event)) })
     expect(late).toEqual([
       {
         type: 'snapshot',

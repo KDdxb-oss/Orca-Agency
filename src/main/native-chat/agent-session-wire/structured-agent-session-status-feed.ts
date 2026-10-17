@@ -11,6 +11,7 @@ import type { StructuredAgentSessionStatusObserverOptions } from './structured-a
 // each chat is reopened. Restart is the one boundary that forgets, and restoring readable sessions
 // republishes them.
 
+import { randomUUID } from 'node:crypto'
 import type { AgentSessionRecord } from '../../../shared/agent-session-record'
 import type {
   AgentSessionStatusEvent,
@@ -87,6 +88,8 @@ export class StructuredAgentSessionStatusFeed {
    *  settled children. */
   private readonly acceptedSends = new Map<string, string>()
   private readonly projections = new StructuredAgentSessionJournalProjections()
+  private readonly epoch = randomUUID()
+  private sequence = 0
 
   constructor(private readonly deps: StructuredAgentSessionStatusFeedDeps) {}
 
@@ -104,7 +107,9 @@ export class StructuredAgentSessionStatusFeed {
     this.subscribers.set(subscriber.id, subscriber)
     this.emit(subscriber, {
       type: 'snapshot',
-      sessions: [...this.published.values()].map(({ summary }) => summary)
+      sessions: [...this.published.values()].map(({ summary }) => summary),
+      epoch: this.epoch,
+      sequence: this.sequence
     })
     return () => this.unsubscribe(subscriber.id)
   }
@@ -137,7 +142,7 @@ export class StructuredAgentSessionStatusFeed {
       summary: retained,
       firstInputSubmissionKey: publication?.firstInputSubmissionKey ?? null
     })
-    this.broadcast({ type: 'status', session: retained })
+    this.broadcastStatus(retained)
   }
 
   unsubscribe(id: string): void {
@@ -173,10 +178,7 @@ export class StructuredAgentSessionStatusFeed {
       firstInputSubmissionKey: publication?.firstInputSubmissionKey ?? null
     })
     this.sink(retained)
-    this.broadcast({
-      type: 'status',
-      session: retained
-    })
+    this.broadcastStatus(retained)
   }
 
   /** The record's name changed outside the journal. A closed chat's retained row follows it too,
@@ -194,7 +196,7 @@ export class StructuredAgentSessionStatusFeed {
     const { conversationName: _previous, ...rest } = publication.summary
     const summary = name ? { ...rest, conversationName: name } : rest
     this.published.set(sessionId, { ...publication, summary })
-    this.broadcast({ type: 'status', session: summary })
+    this.broadcastStatus(summary)
   }
 
   /** The summary last published for the session, as every status subscriber last saw it. */
@@ -248,7 +250,7 @@ export class StructuredAgentSessionStatusFeed {
     })
     if (summaryChanged) {
       this.sink(summary, session.params.location)
-      this.broadcast({ type: 'status', session: summary })
+      this.broadcastStatus(summary)
     }
     if (summary.hostExecutionPhase === 'ready' && previous?.hostExecutionPhase !== 'ready') {
       this.deps.onAgentStarted?.(sessionId)
@@ -356,6 +358,11 @@ export class StructuredAgentSessionStatusFeed {
     } catch (error) {
       this.logFailure('status-sink-publish', 'status sink publish failed', summary.sessionId, error)
     }
+  }
+
+  private broadcastStatus(session: AgentSessionStatusSummary): void {
+    this.sequence += 1
+    this.broadcast({ type: 'status', session, epoch: this.epoch, sequence: this.sequence })
   }
 
   private broadcast(event: AgentSessionStatusEvent): void {

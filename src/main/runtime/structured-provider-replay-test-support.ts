@@ -64,9 +64,20 @@ export type ProviderReplay = {
   /** Every summary the host published for the session, in order. */
   statuses: AgentSessionStatusSummary[]
   /** Sends the recorded prompt, then plays every recorded inbound frame. */
-  play: () => Promise<void>
+  play: (options?: ReplayPlayOptions) => Promise<void>
+  /** Sends the played prompt again under the same operation id: whether the host replayed it. */
+  resend: () => Promise<boolean>
+  /** How many sends reached the provider. */
+  dispatches: () => number
   dispose: () => Promise<void>
 }
+
+export type ReplayPlayOptions = {
+  /** Runs once the frame at `index` (0-based, of `total` inbound frames) has been handed over. */
+  afterFrame?: (index: number, total: number) => void
+}
+
+export type ReplaySend = Parameters<StructuredAgentSessionHost['send']>[1]
 
 let operations = 0
 export const operationId = (): string =>
@@ -76,10 +87,10 @@ export async function sendPrompt(
   host: StructuredAgentSessionHost,
   sessionId: string,
   text: string
-): Promise<void> {
+): Promise<ReplaySend> {
   const body = hostTestMessage(text)
   const fence = host.deps.store.getRecord(sessionId)?.lease.runtimeFence ?? 0
-  const sent = await host.send(CALLER, {
+  const params: ReplaySend = {
     envelope: {
       sessionId,
       clientOperationId: operationId(),
@@ -91,10 +102,21 @@ export async function sendPrompt(
       })
     },
     body
-  })
+  }
+  await resendPrompt(host, params)
+  return params
+}
+
+/** Whether the host replayed the recorded outcome rather than taking the send as new. */
+export async function resendPrompt(
+  host: StructuredAgentSessionHost,
+  params: ReplaySend
+): Promise<boolean> {
+  const sent = await host.send(CALLER, params)
   if (!sent.ok) {
     throw new Error(`replay send refused: ${JSON.stringify(sent.refusal)}`)
   }
+  return sent.replayed
 }
 
 export function subscribeStatuses(
@@ -132,6 +154,16 @@ export function recordedPrompt(transcript: readonly ReplayTranscriptEntry[]): st
   throw new Error('the transcript records no prompt')
 }
 
+export function resendPlayed(
+  host: StructuredAgentSessionHost,
+  played: ReplaySend | null
+): Promise<boolean> {
+  if (!played) {
+    throw new Error('nothing has been played yet')
+  }
+  return resendPrompt(host, played)
+}
+
 export const nextTick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
 /** Rewrites the recorded provider session id to the one this run launched, so the adapter's
@@ -162,19 +194,22 @@ export async function openClaudeReplay(fixture: string): Promise<ProviderReplay>
   const frames = transcript.flatMap((entry) => (entry.type === 'emit_inbound' ? [entry.frame] : []))
   const recordedSessionId = frames.find((frame) => typeof frame.session_id === 'string')
     ?.session_id as string | undefined
+  let played: ReplaySend | null = null
+  let dispatches = 0
   return {
     host,
     sessionId,
     statuses,
-    play: async () => {
+    play: async (options = {}) => {
       const child = claude.child(sessionId)
       const sent = Promise.withResolvers<Record<string, unknown>>()
       child.connection.send = async (message, beforeDispatch) => {
         await beforeDispatch?.()
+        dispatches += 1
         sent.resolve(message)
       }
       const prompt = recordedPrompt(transcript)
-      await sendPrompt(host, sessionId, prompt)
+      played = await sendPrompt(host, sessionId, prompt)
       const sentUuid = String((await sent.promise).uuid)
       // The CLI replays Orca's own send back (--replay-user-messages); a recorder that sent
       // without it left no echo, and its command uuid was its own.
@@ -187,7 +222,7 @@ export async function openClaudeReplay(fixture: string): Promise<ProviderReplay>
         uuid: sentUuid,
         message: { role: 'user', content: [{ type: 'text', text: prompt }] }
       }
-      for (const frame of [echo, ...frames]) {
+      for (const [index, frame] of [echo, ...frames].entries()) {
         let replayed = recordedSessionId
           ? withSessionId(frame, recordedSessionId, providerSessionId)
           : frame
@@ -196,8 +231,11 @@ export async function openClaudeReplay(fixture: string): Promise<ProviderReplay>
         }
         child.handlers.onMessage?.(replayed as Record<string, unknown>)
         await nextTick()
+        options.afterFrame?.(index, frames.length + 1)
       }
     },
+    resend: () => resendPlayed(host, played),
+    dispatches: () => dispatches,
     dispose: () => claude.dispose()
   }
 }

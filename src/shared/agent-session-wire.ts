@@ -292,9 +292,14 @@ export type AgentSessionStatusSummary = {
 /** A summary outlives its provider child: an evicted idle session is still idle, so the host
  *  keeps the last projection and never retracts one. Tabs, not this feed, decide what is listed. */
 export type AgentSessionStatusEvent =
-  | { type: 'snapshot'; sessions: AgentSessionStatusSummary[] }
-  | { type: 'status'; session: AgentSessionStatusSummary }
+  | ({ type: 'snapshot'; sessions: AgentSessionStatusSummary[] } & AgentSessionStatusFeedPosition)
+  | ({ type: 'status'; session: AgentSessionStatusSummary } & AgentSessionStatusFeedPosition)
   | { type: 'end' }
+
+/** Where a frame sits in one host feed's order: a snapshot restates every status up to
+ *  `sequence`, and each later status frame is one past the last. `epoch` names the feed, so a
+ *  restarted host's counter starting over is not read as old. Absent from older hosts. */
+export type AgentSessionStatusFeedPosition = { epoch?: string; sequence?: number }
 
 // ─── Mutation envelope ──────────────────────────────────────────────────────
 

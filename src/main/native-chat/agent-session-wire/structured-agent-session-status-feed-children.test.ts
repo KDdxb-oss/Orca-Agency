@@ -20,7 +20,8 @@ import {
 } from './structured-agent-session-status-feed'
 import {
   indexedStatusFeedSession,
-  statusFeedChildView as childView
+  statusFeedChildView as childView,
+  withoutFeedPosition
 } from './structured-agent-session-status-feed-test-session'
 import { createStructuredAgentSessionLogger } from './structured-agent-session-logger'
 import { codexProviderHandle } from '../../../shared/agent-session-provider-handle-encoding'
@@ -85,7 +86,7 @@ async function feedWithChildren(provider: AgentSessionHandleProvider = 'codex') 
     onChildWorkChanged: (sessionId) => changed.push(sessionId)
   })
   const events: AgentSessionStatusEvent[] = []
-  feed.subscribe({ id: 'list-1', emit: (event) => events.push(event) })
+  feed.subscribe({ id: 'list-1', emit: (event) => events.push(withoutFeedPosition(event)) })
   await journal.appendItem(
     USER_IDENTITY,
     { kind: 'message', role: 'user', blocks: [{ type: 'text', text: 'fan out' }] },
@@ -343,7 +344,7 @@ describe('structured status summary child records', () => {
     feed.forget(SESSION)
     expect(lastSummary(events)).not.toHaveProperty('children')
     // A reload reads the retained projection: it must not list what the store no longer holds.
-    feed.subscribe({ id: 'list-2', emit: (event) => events.push(event) })
+    feed.subscribe({ id: 'list-2', emit: (event) => events.push(withoutFeedPosition(event)) })
     const snapshot = events.at(-1)
     expect(snapshot?.type === 'snapshot' ? snapshot.sessions[0] : null).not.toHaveProperty(
       'children'

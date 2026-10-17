@@ -7,8 +7,10 @@
 
 import type { AgentSessionStatusEvent } from '../../../shared/agent-session-wire'
 import {
+  admitAgentSessionStatusEvent,
   foldAgentSessionStatusEvent,
   revokeAgentSessionStatusLive,
+  type AgentSessionStatusFeedCursor,
   type AgentSessionStatusSnapshot
 } from '../../../shared/agent-session-status-snapshot-fold'
 import { AGENT_SESSION_STATUS_FEED_RUNTIME_CAPABILITY } from '../../../shared/protocol-version'
@@ -40,6 +42,7 @@ export function structuredAgentSessionStatusFeedKey(target: RuntimeClientTarget)
 
 function createOwner(target: RuntimeClientTarget): OwnedStatusFeed {
   let snapshot: StructuredAgentSessionStatusSnapshot = new Map()
+  let cursor: AgentSessionStatusFeedCursor = null
   const confirmedSessions = new Set<string>()
   const listeners = new Set<() => void>()
   const activations = new Set<symbol>()
@@ -58,6 +61,11 @@ function createOwner(target: RuntimeClientTarget): OwnedStatusFeed {
     emit()
   }
   const applyEvent = (event: AgentSessionStatusEvent): void => {
+    const admission = admitAgentSessionStatusEvent(cursor, event)
+    cursor = admission.cursor
+    if (!admission.admitted) {
+      return
+    }
     if (event.type === 'snapshot') {
       reconnectAttempt = 0
       for (const session of event.sessions) {
