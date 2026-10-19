@@ -7,6 +7,7 @@ import { useAppStore } from '@/store'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import { getRepoOwnerRoutedSettings } from '@/lib/repo-runtime-owner'
 import { getConnectionId } from '@/lib/connection-context'
+import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { detectLanguage } from '@/lib/language-detect'
 import { getRuntimeGitCommitCompare } from '@/runtime/runtime-git-diff-client'
 import { readStructuredAgentSessionTurnCheckpointDiff } from '@/runtime/structured-agent-session-client'
@@ -60,6 +61,8 @@ async function openAgentTurnDiff(
   if (result.summary.status !== 'ready') {
     throw new Error(result.summary.errorMessage ?? 'The turn checkpoint could not be read.')
   }
+  // Why: the diff tab opens in the agent's worktree, which is often not the one on screen.
+  activateAndRevealWorktree(worktreeId)
   const subject = translate('components.sidebar.agentResult.diffSubject', 'Agent turn')
   const entry = path === undefined ? undefined : result.entries.find((item) => item.path === path)
   if (!entry) {
